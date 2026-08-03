@@ -633,8 +633,10 @@ results/
 │       ├── biaxial_A_vs_B.png          flow-style quadrant plots
 │       ├── foci_gH2AX.png              foci counts and burden
 │       ├── populations_by_<key>.png    the same, grouped by condition (--group-by)
-│       ├── populations_by_well.png     stacked bars: how many markers, per well
-│       ├── combinations_by_well.png    stacked bars: WHICH markers, per well
+│       ├── populations_by_well.png     stacked bars, % composition per well
+│       ├── populations_by_well_counts.png   stacked bars, absolute cell numbers
+│       ├── combinations_by_well.png    stacked bars: WHICH markers, %
+│       ├── combinations_by_well_counts.png  the same, absolute cell numbers
 │       ├── marker_combinations.png     % of each combination, plate-wide
 │       └── platemap_*.png              plate-shaped heatmaps
 └── _pooled/                            the same, pooled across plates (--pool-screen)
@@ -690,6 +692,33 @@ One row per nucleus. Groups of columns:
 | `population` | how *many* markers: `negative` / `single` / `double` / `triple` / … |
 | `combination` | *which* markers: `GFP+RFP+`, `GFP+Cy5+`, `all-negative`, … |
 | `foci_pos_<channel>` | has at least `--foci-min-count` foci |
+
+### Percentages and counts are both plotted
+
+Every population breakdown comes in two forms, because they answer different
+questions and the difference is often the point:
+
+- **Percentage plots** (`populations_by_well.png`,
+  `platemap_pct_<population>.png`) show *composition* — what fraction of the
+  surviving cells are double positive.
+- **Count plots** (`populations_by_well_counts.png`, `platemap_n_cells.png`,
+  `platemap_n_<population>.png`) show *absolute cell numbers*, so the height of
+  a stacked bar is that well's total cell count.
+
+A well can look excellent by percentage and terrible by count. If a treatment
+kills 80% of the cells and the survivors are enriched for your marker, the
+percentage rises impressively while the count collapses — that is usually
+selection, not induction. Reading the two side by side is the cheapest way to
+catch it.
+
+`platemap_n_cells.png` is also the fastest plate-level QC you have: wells that
+lost cells, an edge effect, a dispensing failure or a row of out-of-focus fields
+all show up immediately as a spatial pattern in cell number. Count heatmaps are
+annotated with the value in each well (up to 96 wells) and use a different
+colour map from the percentage maps so the two are not confused at a glance.
+
+The per-well and per-image summary CSVs carry both: `pct_double` alongside
+`n_double`, `pct_GFP_positive` alongside `n_GFP_positive`, and `n_cells`.
 
 ### OMERO key-value pairs: your experimental metadata
 

@@ -1362,13 +1362,21 @@ def plot_foci(df, chan: str, stat: str, cfg: Config, out: Path, title: str):
     plt.close(fig)
 
 
-def plot_population_bars(df, out: Path, title: str, by: str = "well"):
+def plot_population_bars(df, out: Path, title: str, by: str = "well",
+                         counts: bool = False):
+    """Stacked bars of population classes per group.
+
+    counts=False plots percentages (composition); counts=True plots absolute
+    cell numbers, so total bar height is the well's cell count. Both are worth
+    looking at: a well can have a healthy-looking composition while having lost
+    most of its cells.
+    """
     order = [v for k, v in sorted(POSITIVITY_NAMES.items())]
     tab = (df.groupby([by, "population"]).size()
              .unstack(fill_value=0))
     tab = tab[[c for c in order if c in tab.columns] +
               [c for c in tab.columns if c not in order]]
-    frac = 100 * tab.div(tab.sum(axis=1), axis=0)
+    frac = tab if counts else 100 * tab.div(tab.sum(axis=1), axis=0)
 
     fig, ax = plt.subplots(figsize=(max(6, 0.32 * len(frac)), 4.2))
     bottom = np.zeros(len(frac))
@@ -1376,9 +1384,14 @@ def plot_population_bars(df, out: Path, title: str, by: str = "well"):
     for i, col in enumerate(frac.columns):
         ax.bar(frac.index, frac[col], bottom=bottom, label=col, color=cmap(i))
         bottom += frac[col].to_numpy()
-    ax.set_ylabel("% of cells")
+    ax.set_ylabel("cells" if counts else "% of cells")
     ax.set_xlabel(by)
-    ax.set_ylim(0, 100)
+    if not counts:
+        ax.set_ylim(0, 100)
+    else:
+        totals = tab.sum(axis=1)
+        ax.axhline(totals.median(), color="crimson", lw=1.0, ls=":",
+                   label=f"median {totals.median():.0f}")
     ax.set_title(title, fontsize=11)
     ax.tick_params(axis="x", rotation=90, labelsize=7)
     ax.legend(frameon=False, fontsize=8, ncol=len(frac.columns),
@@ -1389,14 +1402,15 @@ def plot_population_bars(df, out: Path, title: str, by: str = "well"):
     plt.close(fig)
 
 
-def plot_combinations_by_well(df, out: Path, title: str, by: str = "well"):
+def plot_combinations_by_well(df, out: Path, title: str, by: str = "well",
+                              counts: bool = False):
     """Stacked bars per group showing WHICH markers, not just how many."""
     tab = df.groupby([by, "combination"]).size().unstack(fill_value=0)
     order = ["all-negative"] + sorted(
         [c for c in tab.columns if c != "all-negative"],
         key=lambda c: (c.count("+"), c))
     tab = tab[[c for c in order if c in tab.columns]]
-    frac = 100 * tab.div(tab.sum(axis=1), axis=0)
+    frac = tab if counts else 100 * tab.div(tab.sum(axis=1), axis=0)
 
     fig, ax = plt.subplots(figsize=(max(6, 0.34 * len(frac)), 4.6))
     bottom = np.zeros(len(frac))
@@ -1405,9 +1419,10 @@ def plot_combinations_by_well(df, out: Path, title: str, by: str = "well"):
         colour = "0.85" if col == "all-negative" else cmap(i)
         ax.bar(frac.index, frac[col], bottom=bottom, label=col, color=colour)
         bottom += frac[col].to_numpy()
-    ax.set_ylabel("% of cells")
+    ax.set_ylabel("cells" if counts else "% of cells")
     ax.set_xlabel(by)
-    ax.set_ylim(0, 100)
+    if not counts:
+        ax.set_ylim(0, 100)
     ax.set_title(title, fontsize=11)
     ax.tick_params(axis="x", rotation=90, labelsize=7)
     ax.legend(frameon=False, fontsize=7, ncol=min(len(frac.columns), 4),
@@ -1434,19 +1449,30 @@ def plot_combinations(df, out: Path, title: str):
     plt.close(fig)
 
 
-def plot_platemap(df, value_col: str, out: Path, title: str):
-    """Heatmap of a per-well percentage laid out on the physical plate."""
+def plot_platemap(df, value_col: str, out: Path, title: str,
+                  cbar_label: str = "%", cmap: str = "magma",
+                  annotate: bool = False):
+    """Heatmap of a per-well value laid out on the physical plate."""
     piv = df.pivot_table(index="well_row", columns="well_col",
                          values=value_col, aggfunc="mean")
     fig, ax = plt.subplots(figsize=(0.42 * max(piv.shape[1], 8) + 2,
                                     0.42 * max(piv.shape[0], 6) + 1.6))
-    im = ax.imshow(piv.to_numpy(), cmap="magma", aspect="equal")
+    im = ax.imshow(piv.to_numpy(), cmap=cmap, aspect="equal")
+    if annotate and piv.size <= 96:
+        vmid = np.nanmean([np.nanmin(piv.to_numpy()), np.nanmax(piv.to_numpy())])
+        for r in range(piv.shape[0]):
+            for c in range(piv.shape[1]):
+                v = piv.to_numpy()[r, c]
+                if np.isfinite(v):
+                    ax.text(c, r, f"{v:.0f}", ha="center", va="center",
+                            fontsize=6,
+                            color="white" if v < vmid else "black")
     ax.set_xticks(range(piv.shape[1]))
     ax.set_xticklabels([str(c + 1) for c in piv.columns], fontsize=7)
     ax.set_yticks(range(piv.shape[0]))
     ax.set_yticklabels([chr(ord("A") + r) for r in piv.index], fontsize=7)
     ax.set_title(title, fontsize=10)
-    fig.colorbar(im, ax=ax, shrink=0.8, label="%")
+    fig.colorbar(im, ax=ax, shrink=0.8, label=cbar_label)
     fig.tight_layout()
     fig.savefig(out, dpi=160)
     plt.close(fig)
@@ -1617,6 +1643,7 @@ def summarise(df: pd.DataFrame, markers: Sequence[str], by: Sequence[str]) -> pd
     out = g.size().rename("n_cells").to_frame()
     for m in markers:
         out[f"pct_{m}_positive"] = 100 * g[f"pos_{m}"].mean()
+        out[f"n_{m}_positive"] = g[f"pos_{m}"].sum().astype(int)
 
     # how many markers (negative / single / double / ...), observed classes only
     seen = set(df["population"].unique())
@@ -1624,6 +1651,7 @@ def summarise(df: pd.DataFrame, markers: Sequence[str], by: Sequence[str]) -> pd
     ordered += sorted(p for p in seen if p not in POSITIVITY_NAMES.values())
     for name in ordered:
         out[f"pct_{name}"] = 100 * g["population"].apply(lambda s, n=name: (s == n).mean())
+        out[f"n_{name}"] = g["population"].apply(lambda s, n=name: int((s == n).sum()))
 
     # WHICH markers, not just how many: one column per observed combination,
     # ordered by degree then alphabetically (GFP+, RFP+, GFP+RFP+, GFP+RFP+Cy5+)
@@ -1631,6 +1659,8 @@ def summarise(df: pd.DataFrame, markers: Sequence[str], by: Sequence[str]) -> pd
     for combo in sorted(combos, key=lambda c: (c.count("+"), c)):
         out[f"pct_{combo}"] = 100 * g["combination"].apply(
             lambda s, c=combo: (s == c).mean())
+        out[f"n_{combo}"] = g["combination"].apply(
+            lambda s, c=combo: int((s == c).sum()))
 
     out["pct_any_positive"] = 100 * g["n_positive"].apply(lambda s: (s > 0).mean())
     for chan in foci_channel_columns(df):
@@ -1909,11 +1939,17 @@ def analyse(df: pd.DataFrame, cfg: Config, outdir: Path, tag: str,
                      plots / f"biaxial_{safe(mx)}_vs_{safe(my)}.png",
                      f"{tag} - {mx} vs {my}", cfg.max_points)
     plot_population_bars(df, plots / "populations_by_well.png",
-                         f"{tag} - population breakdown per well")
+                         f"{tag} - population breakdown per well (%)")
+    plot_population_bars(df, plots / "populations_by_well_counts.png",
+                         f"{tag} - cells per population per well (counts)",
+                         counts=True)
     plot_combinations(df, plots / "marker_combinations.png",
                       f"{tag} - marker combinations")
     plot_combinations_by_well(df, plots / "combinations_by_well.png",
-                              f"{tag} - which markers, per well")
+                              f"{tag} - which markers, per well (%)")
+    plot_combinations_by_well(df, plots / "combinations_by_well_counts.png",
+                              f"{tag} - which markers, per well (counts)",
+                              counts=True)
 
     foci_chans = foci_channel_columns(df)
     for chan in foci_chans:
@@ -1958,22 +1994,45 @@ def analyse(df: pd.DataFrame, cfg: Config, outdir: Path, tag: str,
         per_group = summarise(df, markers, ["plate", group_col])
         per_group.to_csv(outdir / f"per_{safe(group_col)}_summary.csv", index=False)
         plot_population_bars(df, plots / f"populations_by_{safe(group_col)}.png",
-                             f"{tag} - populations by {group_col}", by=group_col)
+                             f"{tag} - populations by {group_col} (%)",
+                             by=group_col)
+        plot_population_bars(df,
+                             plots / f"populations_by_{safe(group_col)}_counts.png",
+                             f"{tag} - cells per population by {group_col}",
+                             by=group_col, counts=True)
         plot_combinations_by_well(df, plots / f"combinations_by_{safe(group_col)}.png",
-                                  f"{tag} - which markers, by {group_col}",
+                                  f"{tag} - which markers, by {group_col} (%)",
                                   by=group_col)
         LOG.info("[%s] grouped summary by %s (%d groups)",
                  tag, group_col, df[group_col].nunique())
+
+    # ---- plate heatmaps: percentages AND absolute cell numbers -------------
+    plot_platemap(per_well, "n_cells", plots / "platemap_n_cells.png",
+                  f"{tag} - total cells per well", cbar_label="cells",
+                  cmap="viridis", annotate=True)
 
     for m in markers:
         plot_platemap(per_well, f"pct_{m}_positive",
                       plots / f"platemap_pct_{safe(m)}_positive.png",
                       f"{tag} - % {m} positive")
-    for pop in ("double", "triple"):
+        if f"n_{m}_positive" in per_well.columns:
+            plot_platemap(per_well, f"n_{m}_positive",
+                          plots / f"platemap_n_{safe(m)}_positive.png",
+                          f"{tag} - {m}-positive cells per well",
+                          cbar_label="cells", cmap="viridis", annotate=True)
+
+    for pop in [v for _, v in sorted(POSITIVITY_NAMES.items())]:
         col = f"pct_{pop}"
+        label = pop if pop == "negative" else f"{pop} positive"
         if col in per_well.columns and per_well[col].sum() > 0:
-            plot_platemap(per_well, col, plots / f"platemap_pct_{pop}_positive.png",
-                          f"{tag} - % {pop} positive")
+            plot_platemap(per_well, col, plots / f"platemap_pct_{pop}.png",
+                          f"{tag} - % {label}")
+        ncol = f"n_{pop}"
+        if ncol in per_well.columns and per_well[ncol].sum() > 0:
+            plot_platemap(per_well, ncol, plots / f"platemap_n_{pop}.png",
+                          f"{tag} - {pop} cells per well",
+                          cbar_label="cells", cmap="viridis", annotate=True)
+
     for combo in sorted({c for c in df["combination"].unique() if c.count("+") > 1}):
         col = f"pct_{combo}"
         if col in per_well.columns and per_well[col].sum() > 0:
