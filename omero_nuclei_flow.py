@@ -103,6 +103,7 @@ class Config:
     dapi_channel: Optional[str] = None       # index or name fragment
     z_mode: str = "mid"                      # mid | mip
     timepoint: int = 0
+    server_tile_height: int = 0              # 0 = whole plane; else strip rows
 
     # segmentation
     model: str = "stardist"                  # stardist | cellpose
@@ -113,6 +114,9 @@ class Config:
     diameter: Optional[float] = None
     n_tiles: Optional[int] = None
     gpu: bool = True
+    gpu_memory_limit: Optional[int] = None   # MB cap for the GPU
+    gc_every: int = 50                       # garbage-collect every N images
+    reload_model_every: int = 0              # rebuild the model every N images
 
     # QC filters
     min_area: int = 30
@@ -182,6 +186,7 @@ class Config:
     max_points: int = 50000
     per_well_plots: bool = False
     save_overlays: int = 0                   # number of QC overlays per plate
+    overlay_line_width: int = 2              # outline thickness in px
 
     # output
     outdir: Path = Path("./results")
@@ -323,11 +328,34 @@ def iter_images(plate, cfg: Config):
 
 
 def channel_names(image) -> List[str]:
+    """Channel labels WITHOUT initialising the server-side rendering engine.
+
+    Plain image.getChannels() prepares the rendering engine, which makes the
+    server load pixel data just to compute display defaults. On Bio-Formats
+    backed plates (ImageXpress/CellWorx read in place) that is a whole-plane
+    Java heap allocation per call, for information we already have in the
+    logical-channel metadata. noRE=True skips all of it.
+    """
+    try:
+        channels = image.getChannels(noRE=True)
+    except TypeError:                     # very old omero-py without the kwarg
+        channels = image.getChannels()
     names = []
-    for i, ch in enumerate(image.getChannels()):
-        name = ch.getLabel() or ch.getName() or f"C{i+1}"
-        names.append(str(name).strip())
+    for i, ch in enumerate(channels or []):
+        name = None
+        try:
+            name = ch.getLabel() or ch.getName()
+        except Exception:                 # noqa: BLE001
+            pass
+        names.append(str(name).strip() if name else f"C{i + 1}")
     return names
+
+
+def _is_server_oom(exc: BaseException) -> bool:
+    """Server-side Java heap exhaustion, reported as an OMERO InternalException."""
+    text = f"{type(exc).__name__}: {exc}"
+    return ("OutOfMemoryError" in text or "Java heap space" in text
+            or "InternalException" in text)
 
 
 def resolve_dapi(names: Sequence[str], requested: Optional[str]) -> int:
@@ -346,10 +374,17 @@ def resolve_dapi(names: Sequence[str], requested: Optional[str]) -> int:
     return 0
 
 
-def read_stack(image, cfg: Config) -> np.ndarray:
-    """Return a (H, W, C) float32 array for the chosen z/t."""
+def read_stack(image, cfg: Config, tile_height: int = 0) -> np.ndarray:
+    """Return a (H, W, C) float32 array for the chosen z/t.
+
+    tile_height > 0 reads each plane in horizontal strips via getTile() instead
+    of one getPlane() call. The server allocates a buffer per request, so on
+    Bio-Formats backed data (where every read re-opens the original file) strips
+    are the difference between a 16 MB allocation and a 200 KB one.
+    """
     pix = image.getPrimaryPixels()
     size_c, size_z = image.getSizeC(), image.getSizeZ()
+    size_x, size_y = image.getSizeX(), image.getSizeY()
     t = min(cfg.timepoint, image.getSizeT() - 1)
 
     if cfg.z_mode == "mip" and size_z > 1:
@@ -357,9 +392,21 @@ def read_stack(image, cfg: Config) -> np.ndarray:
     else:
         zs = [size_z // 2]
 
-    zct = [(z, c, t) for c in range(size_c) for z in zs]
-    planes = list(pix.getPlanes(zct))
-    planes = [np.asarray(p, dtype=np.float32) for p in planes]
+    def _plane(z: int, c: int) -> np.ndarray:
+        if not tile_height:
+            return np.asarray(pix.getPlane(z, c, t), dtype=np.float32)
+        strips = []
+        for y0 in range(0, size_y, tile_height):
+            h = min(tile_height, size_y - y0)
+            strips.append(np.asarray(pix.getTile(z, c, t, tile=(0, y0, size_x, h)),
+                                     dtype=np.float32))
+        return np.vstack(strips)
+
+    if not tile_height:
+        zct = [(z, c, t) for c in range(size_c) for z in zs]
+        planes = [np.asarray(p, dtype=np.float32) for p in pix.getPlanes(zct)]
+    else:
+        planes = [_plane(z, c) for c in range(size_c) for z in zs]
 
     out = np.empty((planes[0].shape[0], planes[0].shape[1], size_c), dtype=np.float32)
     k = 0
@@ -383,6 +430,19 @@ def normalize_percentile(img: np.ndarray, lo: float = 1.0,
     return np.clip((img - p_lo) / (p_hi - p_lo), 0, 1).astype(np.float32)
 
 
+def _is_oom(exc: BaseException) -> bool:
+    """TensorFlow and PyTorch report GPU exhaustion under several names."""
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(s in text for s in (
+        "dst tensor is not initialized",     # TF host->device copy failed
+        "oom when allocating",
+        "resourceexhausted",
+        "out of memory",
+        "cuda_error_out_of_memory",
+        "cudnn_status_alloc_failed",
+    ))
+
+
 class Segmenter:
     """Thin wrapper so StarDist and Cellpose share one call signature."""
 
@@ -390,16 +450,99 @@ class Segmenter:
         self.cfg = cfg
         self.kind = cfg.model.lower()
         self._model = None
+        self._calls = 0
+        self._oom_events = 0
+
+    # ---- GPU memory management -------------------------------------------
+
+    def _configure_gpu(self):
+        """Enable incremental GPU allocation before the first op runs.
+
+        By default TensorFlow reserves essentially all VRAM up front, then
+        fragments it over thousands of predict() calls until a copy fails with
+        'Dst tensor is not initialized'. Memory growth makes it allocate as
+        needed, which both survives fragmentation better and leaves room for
+        anything else using the card.
+        """
+        if not self.cfg.gpu or self.kind != "stardist":
+            return
+        try:
+            import tensorflow as tf
+            gpus = tf.config.list_physical_devices("GPU")
+            for g in gpus:
+                try:
+                    tf.config.experimental.set_memory_growth(g, True)
+                except RuntimeError:
+                    pass          # already initialised; harmless
+            if gpus and self.cfg.gpu_memory_limit:
+                tf.config.set_logical_device_configuration(
+                    gpus[0], [tf.config.LogicalDeviceConfiguration(
+                        memory_limit=int(self.cfg.gpu_memory_limit))])
+                LOG.info("GPU memory capped at %d MB", self.cfg.gpu_memory_limit)
+            if gpus:
+                LOG.info("GPU memory growth enabled on %d device(s)", len(gpus))
+        except Exception as exc:                       # noqa: BLE001
+            LOG.debug("Could not configure GPU memory: %s", exc)
+
+    def _free_memory(self, reload_model: bool = False):
+        """Release what we can after an OOM, optionally rebuilding the model."""
+        import gc
+        if reload_model and self.kind == "stardist":
+            try:
+                from tensorflow.keras import backend as K
+                self._model = None
+                K.clear_session()
+            except Exception:                          # noqa: BLE001
+                self._model = None
+        gc.collect()
+        if self.kind == "cellpose":
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception:                          # noqa: BLE001
+                pass
 
     def _load(self):
         if self._model is not None:
             return
         if self.kind == "stardist":
-            from stardist.models import StarDist2D
+            # TensorFlow >=2.16 ships Keras 3, which StarDist does not support.
+            # If the user installed tf-keras (the legacy Keras 2 package), point
+            # tf.keras at it. Must happen before TensorFlow is first imported;
+            # the import below is the first one, since it is lazy. Harmless on
+            # TF <2.16, where the variable is ignored.
+            import importlib.util
+            if importlib.util.find_spec("tf_keras") is not None:
+                if os.environ.setdefault("TF_USE_LEGACY_KERAS", "1") == "1":
+                    LOG.info("tf-keras found -> TF_USE_LEGACY_KERAS=1 "
+                             "(StarDist needs Keras 2)")
+            try:
+                from stardist.models import StarDist2D
+            except ModuleNotFoundError as exc:
+                if "pkg_resources" in str(exc):
+                    raise RuntimeError(
+                        "StarDist needs pkg_resources, which setuptools 82 "
+                        "removed (Feb 2026). Fix it with:\n"
+                        "    pip install \"setuptools<81\"\n"
+                        "The pinned environment.yml already does this; run "
+                        "--check-env to verify the rest of the stack."
+                    ) from exc
+                raise RuntimeError(
+                    f"Could not import StarDist ({exc}). Install it with "
+                    "'pip install stardist tensorflow==2.10.1', or use "
+                    "--model cellpose instead."
+                ) from exc
+            self._configure_gpu()
             LOG.info("Loading StarDist model '%s'", self.cfg.stardist_model)
             self._model = StarDist2D.from_pretrained(self.cfg.stardist_model)
         elif self.kind == "cellpose":
-            from cellpose import models as cp_models
+            try:
+                from cellpose import models as cp_models
+            except ModuleNotFoundError as exc:
+                raise RuntimeError(
+                    f"Could not import Cellpose ({exc}). Install it with "
+                    "'pip install cellpose', or use --model stardist."
+                ) from exc
             LOG.info("Loading Cellpose model '%s'", self.cfg.cellpose_model)
             try:  # Cellpose >= 4 (cpsam generalist)
                 self._model = cp_models.CellposeModel(gpu=self.cfg.gpu)
@@ -411,25 +554,71 @@ class Segmenter:
         else:
             raise ValueError(f"Unknown model '{self.cfg.model}'")
 
-    def __call__(self, dapi: np.ndarray) -> np.ndarray:
-        self._load()
+    def _segment(self, dapi: np.ndarray, tiles: Optional[int] = None,
+                 force_cpu: bool = False) -> np.ndarray:
         if self.kind == "stardist":
             kw = {}
             if self.cfg.prob_thresh is not None:
                 kw["prob_thresh"] = self.cfg.prob_thresh
             if self.cfg.nms_thresh is not None:
                 kw["nms_thresh"] = self.cfg.nms_thresh
-            if self.cfg.n_tiles:
-                kw["n_tiles"] = (self.cfg.n_tiles, self.cfg.n_tiles)
-            labels, _ = self._model.predict_instances(normalize_percentile(dapi), **kw)
+            n = tiles if tiles is not None else self.cfg.n_tiles
+            if n:
+                kw["n_tiles"] = (int(n), int(n))
+            img = normalize_percentile(dapi)
+            if force_cpu:
+                import tensorflow as tf
+                with tf.device("/CPU:0"):
+                    labels, _ = self._model.predict_instances(img, **kw)
+            else:
+                labels, _ = self._model.predict_instances(img, **kw)
             return labels.astype(np.int32)
 
         # cellpose
         diam = self.cfg.diameter or 0
         res = self._model.eval(normalize_percentile(dapi), diameter=diam or None,
                                channels=[0, 0])
-        masks = res[0]
-        return np.asarray(masks, dtype=np.int32)
+        return np.asarray(res[0], dtype=np.int32)
+
+    def __call__(self, dapi: np.ndarray) -> np.ndarray:
+        self._load()
+        self._calls += 1
+
+        # Periodic housekeeping: TensorFlow/Keras accumulate memory across many
+        # predict() calls, so a run that starts fine can fail thousands of
+        # images later. Cheap insurance against a mid-screen crash.
+        if self.cfg.gc_every and self._calls % self.cfg.gc_every == 0:
+            self._free_memory()
+        if (self.cfg.reload_model_every
+                and self._calls % self.cfg.reload_model_every == 0):
+            LOG.info("Reloading segmentation model after %d images "
+                     "(--reload-model-every)", self._calls)
+            self._free_memory(reload_model=True)
+            self._load()
+
+        try:
+            return self._segment(dapi)
+        except Exception as exc:                       # noqa: BLE001
+            if not _is_oom(exc):
+                raise
+            self._oom_events += 1
+            base = self.cfg.n_tiles or 1
+            more = max(base * 2, 2)
+            LOG.warning("GPU out of memory on this field (event %d). Freeing "
+                        "memory and retrying with %dx%d tiling.",
+                        self._oom_events, more, more)
+            self._free_memory()          # cheap first: collect, keep the model
+            try:
+                return self._segment(dapi, tiles=more)
+            except Exception as exc2:                  # noqa: BLE001
+                if not _is_oom(exc2):
+                    raise
+                LOG.warning("Still out of GPU memory - segmenting this field on "
+                            "the CPU (slow, but the run continues). Consider "
+                            "--reload-model-every 200 or --gpu-memory-limit.")
+                self._free_memory(reload_model=True)
+                self._load()
+                return self._segment(dapi, tiles=more, force_cpu=True)
 
 
 def filter_labels(labels: np.ndarray, cfg: Config) -> np.ndarray:
@@ -1265,7 +1454,8 @@ def plot_platemap(df, value_col: str, out: Path, title: str):
 
 def save_foci_crop_montage(plane: np.ndarray, nuc_labels: np.ndarray,
                            foci_labels: np.ndarray, out: Path, title: str,
-                           n: int = 12, pad: int = 4, seed: int = 0):
+                           n: int = 12, pad: int = 4, seed: int = 0,
+                           line_width: int = 2):
     """Zoomed crops of individual nuclei with detected foci circled.
 
     At 20x a focus is 1-3 pixels wide and completely invisible in a full-field
@@ -1298,13 +1488,13 @@ def save_foci_crop_montage(plane: np.ndarray, nuc_labels: np.ndarray,
         ax.imshow(normalize_percentile(crop, 1, 99.5), cmap="gray",
                   interpolation="nearest")
         ax.contour(ncrop.astype(float), levels=[0.5], colors="#4da6ff",
-                   linewidths=0.8)
+                   linewidths=0.5 * line_width)
         fids = np.unique(fcrop[ncrop])
         fids = fids[fids != 0]
         for fid in fids:
             ys, xs = np.where(fcrop == fid)
             ax.plot(xs.mean(), ys.mean(), "o", mfc="none", mec="#ff3b30",
-                    ms=9, mew=1.0)
+                    ms=9, mew=0.6 * line_width)
         ax.set_title(f"nucleus {lab}: {len(fids)} foci", fontsize=8)
         ax.axis("off")
     for ax in axes.ravel()[len(pick):]:
@@ -1317,14 +1507,31 @@ def save_foci_crop_montage(plane: np.ndarray, nuc_labels: np.ndarray,
 
 
 def save_overlay(dapi: np.ndarray, labels: np.ndarray, out: Path, title: str,
-                 foci_labels: Optional[np.ndarray] = None):
+                 foci_labels: Optional[np.ndarray] = None, line_width: int = 2):
+    """Nuclear outlines (red) and, if given, detected foci (green) on DAPI.
+
+    line_width is the approximate outline thickness in pixels. On a 2048x2048
+    field rendered into a ~1000 px PNG a 1 px outline is close to invisible,
+    so the default is deliberately thicker than one pixel.
+    """
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.imshow(normalize_percentile(dapi), cmap="gray")
+
     edges = find_boundaries(labels, mode="outer")
+    grow = max(0, int(round(line_width)) - 1)
+    if grow:
+        edges = ndi.binary_dilation(edges, structure=np.ones((3, 3), bool),
+                                    iterations=grow)
     overlay = np.zeros((*edges.shape, 4))
     overlay[edges] = (1, 0.3, 0.1, 1)
+
     if foci_labels is not None and foci_labels.max() > 0:
-        overlay[foci_labels > 0] = (0.2, 1.0, 0.4, 1)
+        fmask = foci_labels > 0
+        if grow:                       # foci are 1-3 px at 20x; grow to be seen
+            fmask = ndi.binary_dilation(fmask, structure=np.ones((3, 3), bool),
+                                        iterations=max(1, int(round(grow / 2))))
+        overlay[fmask] = (0.2, 1.0, 0.4, 1)
+
     ax.imshow(overlay)
     n_foci = int(foci_labels.max()) if foci_labels is not None else 0
     extra = f", {n_foci} foci" if n_foci else ""
@@ -1465,6 +1672,8 @@ def process_plate(conn, plate, cfg: Config, segmenter: Segmenter,
     well_meta_rows: List[Dict[str, str]] = []
     foci_params: Optional[FociParams] = None
     crops_done = 0
+    chan_cache: Dict[int, List[str]] = {}
+    strip_height = cfg.server_tile_height
 
     for label, row, col, fld, image, well in iter_images(plate, cfg):
         try:
@@ -1477,9 +1686,26 @@ def process_plate(conn, plate, cfg: Config, segmenter: Segmenter,
                                        "well_row": row, "well_col": col,
                                        **kv_to_columns(wkv, cfg.kv_prefix)})
 
-            names = channel_names(image)
+            # Channel metadata is identical across a plate; querying it once
+            # per image is thousands of needless server round trips.
+            size_c = image.getSizeC()
+            if size_c not in chan_cache:
+                chan_cache[size_c] = channel_names(image)
+                LOG.info("  channels (%d): %s", size_c,
+                         ", ".join(chan_cache[size_c]))
+            names = chan_cache[size_c]
             dapi_idx = resolve_dapi(names, cfg.dapi_channel)
-            stack = read_stack(image, cfg)
+
+            try:
+                stack = read_stack(image, cfg, tile_height=strip_height)
+            except Exception as exc:                  # noqa: BLE001
+                if not _is_server_oom(exc):
+                    raise
+                strip_height = strip_height or 512
+                LOG.warning("OMERO server ran out of Java heap reading image %s. "
+                            "Retrying in %d-row strips, and using strips for the "
+                            "rest of this plate.", image.getId(), strip_height)
+                stack = read_stack(image, cfg, tile_height=strip_height)
             labels = filter_labels(segmenter(stack[..., dapi_idx]), cfg)
             n = int(labels.max())
             LOG.info("  %s field %d (image %d): %d nuclei", label, fld, image.getId(), n)
@@ -1520,7 +1746,8 @@ def process_plate(conn, plate, cfg: Config, segmenter: Segmenter,
                             save_foci_crop_montage(
                                 plane, labels, flab,
                                 overlay_dir / f"foci_crops_{safe(label)}_f{fld}.png",
-                                f"{plate_name} {label} field {fld} - {fchan}")
+                                f"{plate_name} {label} field {fld} - {fchan}",
+                                line_width=cfg.overlay_line_width)
                             crops_done += 1
                     meas = summarise_foci(props, meas, fchan)
                     if not props.empty:
@@ -1562,14 +1789,29 @@ def process_plate(conn, plate, cfg: Config, segmenter: Segmenter,
                 save_overlay(stack[..., dapi_idx], labels,
                              overlay_dir / f"{safe(label)}_f{fld}_{image.getId()}.png",
                              f"{plate_name} {label} field {fld}",
-                             foci_labels=foci_overlay)
+                             foci_labels=foci_overlay,
+                             line_width=cfg.overlay_line_width)
                 overlays_done += 1
 
             if cfg.upload_rois:
                 upload_masks_as_rois(conn, image, labels)
 
         except Exception as exc:                      # noqa: BLE001
-            LOG.exception("  failed on image %s (%s): %s", image.getId(), label, exc)
+            if _is_server_oom(exc):
+                LOG.error("  image %s (%s): the OMERO SERVER ran out of Java "
+                          "heap. This is a server-side limit, not your machine. "
+                          "See the 'Java heap space' section of the README - the "
+                          "quickest client-side lever is --server-tile-height 256.",
+                          image.getId(), label)
+            else:
+                LOG.exception("  failed on image %s (%s): %s",
+                              image.getId(), label, exc)
+        finally:
+            # release any server-side rendering engine held for this image
+            try:
+                image._closeRE()
+            except Exception:                         # noqa: BLE001
+                pass
 
     nuclei = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
     foci = pd.concat(foci_rows, ignore_index=True) if foci_rows else pd.DataFrame()
@@ -1798,7 +2040,8 @@ def check_environment() -> int:
 
     dists = ["numpy", "pandas", "scipy", "scikit-image", "matplotlib",
              "scikit-learn", "pyarrow", "openpyxl", "omero-py", "zeroc-ice",
-             "stardist", "csbdeep", "tensorflow", "protobuf", "cellpose", "torch"]
+             "stardist", "csbdeep", "tensorflow", "keras", "tf-keras",
+             "protobuf", "cellpose", "torch", "setuptools"]
     found: Dict[str, Optional[str]] = {}
     for d in dists:
         try:
@@ -1848,6 +2091,32 @@ def check_environment() -> int:
         problems.append("TensorFlow 2.11+ has no native-Windows GPU support - use "
                         "tensorflow==2.10.1 with CUDA 11.2 / cuDNN 8.1, run under "
                         "WSL2, or switch to --model cellpose (PyTorch)")
+    # setuptools 82 (Feb 2026) removed pkg_resources, which StarDist still imports
+    try:
+        import warnings as _w
+        with _w.catch_warnings():
+            _w.simplefilter("ignore")
+            import pkg_resources  # noqa: F401
+        has_pkg_resources = True
+    except Exception:                                  # noqa: BLE001
+        has_pkg_resources = False
+    # Keras 3 vs StarDist (TF >= 2.16 installs Keras 3 by default)
+    if found["stardist"] and tf_v >= (2, 16):
+        if not found["tf-keras"]:
+            problems.append("TensorFlow >=2.16 ships Keras 3, which StarDist "
+                            "does not support - run: pip install tf-keras "
+                            "(the script then sets TF_USE_LEGACY_KERAS=1 for you)")
+        elif os.environ.get("TF_USE_LEGACY_KERAS") != "1":
+            print("  note: tf-keras is installed; TF_USE_LEGACY_KERAS will be "
+                  "set automatically when StarDist loads")
+
+    if found["stardist"] and not has_pkg_resources:
+        problems.append("pkg_resources is missing (setuptools 82 removed it) but "
+                        "StarDist imports it - run: pip install \"setuptools<81\"")
+    elif not has_pkg_resources and major_minor(found["setuptools"]) >= (81, 0):
+        problems.append("setuptools >=81 has dropped pkg_resources; if you later "
+                        "install StarDist, pin setuptools<81 first")
+
     if not found["omero-py"]:
         problems.append("omero-py missing - the script cannot reach OMERO "
                         "(--from-csv still works)")
@@ -1879,12 +2148,18 @@ def parse_args(argv=None) -> Config:
 
     g = p.add_argument_group("Data selection")
     g.add_argument("--screen-id", type=int)
-    g.add_argument("--plate-id", type=int, action="append", default=[], dest="plate_ids")
+    g.add_argument("--plate-id", action="append", default=[], dest="plate_ids",
+                   help="plate ID; repeatable AND comma-separated, e.g. "
+                        "--plate-id 101,102 --plate-id 103")
     g.add_argument("--wells", help="comma separated, e.g. A1,A2,B3")
     g.add_argument("--max-fields", type=int)
     g.add_argument("--dapi-channel", help="channel index or name fragment")
     g.add_argument("--z-mode", choices=["mid", "mip"], default="mid")
     g.add_argument("--timepoint", type=int, default=0)
+    g.add_argument("--server-tile-height", type=int, default=0,
+                   help="read planes in strips of N rows instead of whole "
+                        "planes; use 256 or 512 if the OMERO server throws "
+                        "'Java heap space'")
 
     g = p.add_argument_group("Segmentation")
     g.add_argument("--model", choices=["stardist", "cellpose"], default="stardist")
@@ -1895,6 +2170,13 @@ def parse_args(argv=None) -> Config:
     g.add_argument("--diameter", type=float)
     g.add_argument("--n-tiles", type=int)
     g.add_argument("--no-gpu", action="store_true")
+    g.add_argument("--gpu-memory-limit", type=int,
+                   help="cap TensorFlow's GPU memory in MB, e.g. 4096")
+    g.add_argument("--gc-every", type=int, default=50,
+                   help="garbage-collect every N images (0 = never)")
+    g.add_argument("--reload-model-every", type=int, default=0,
+                   help="rebuild the segmentation model every N images; the "
+                        "reliable cure for a slow GPU memory leak, e.g. 200")
     g.add_argument("--min-area", type=int, default=30)
     g.add_argument("--max-area", type=int, default=100000)
     g.add_argument("--min-solidity", type=float, default=0.0)
@@ -2000,6 +2282,8 @@ def parse_args(argv=None) -> Config:
     g.add_argument("--per-well-plots", action="store_true")
     g.add_argument("--save-overlays", type=int, default=0,
                    help="save N segmentation QC overlays per plate")
+    g.add_argument("--overlay-line-width", type=int, default=2,
+                   help="outline thickness in px for QC overlays and foci crops")
     g.add_argument("--outdir", type=Path, default=Path("./results"))
     g.add_argument("--pool-screen", action="store_true",
                    help="also produce a screen-level pooled analysis")
@@ -2019,6 +2303,18 @@ def parse_args(argv=None) -> Config:
             k, v = part.split("=")
             manual[k.strip()] = float(v)
 
+    plate_ids: List[int] = []
+    for part in a.plate_ids:
+        for piece in str(part).split(","):
+            piece = piece.strip()
+            if not piece:
+                continue
+            try:
+                plate_ids.append(int(piece))
+            except ValueError:
+                p.error(f"--plate-id expects integers, got '{piece}'. Plate IDs "
+                        f"are the numbers shown in OMERO.web, e.g. --plate-id 101,102")
+
     kv_prefix = a.kv_prefix or "kv_"
     if not a.kv_prefix:
         LOG.warning("Empty --kv-prefix is not supported (columns must stay "
@@ -2027,14 +2323,16 @@ def parse_args(argv=None) -> Config:
     cfg = Config(
         host=a.host, port=a.port, user=a.user, password=a.password,
         secure=not a.insecure, group=a.group,
-        screen_id=a.screen_id, plate_ids=a.plate_ids,
+        screen_id=a.screen_id, plate_ids=plate_ids,
         wells=a.wells.split(",") if a.wells else None,
         max_fields=a.max_fields, dapi_channel=a.dapi_channel,
         z_mode=a.z_mode, timepoint=a.timepoint,
+        server_tile_height=max(0, a.server_tile_height),
         model=a.model, stardist_model=a.stardist_model,
         cellpose_model=a.cellpose_model, prob_thresh=a.prob_thresh,
         nms_thresh=a.nms_thresh, diameter=a.diameter, n_tiles=a.n_tiles,
-        gpu=not a.no_gpu, min_area=a.min_area, max_area=a.max_area,
+        gpu=not a.no_gpu, gpu_memory_limit=a.gpu_memory_limit,
+        gc_every=max(0, a.gc_every), reload_model_every=max(0, a.reload_model_every), min_area=a.min_area, max_area=a.max_area,
         exclude_border=not a.keep_border, min_solidity=a.min_solidity,
         filter_dead=a.filter_dead, dead_method=a.dead_method,
         dead_stat=a.dead_stat, dead_k=a.dead_k, dead_quantile=a.dead_quantile,
@@ -2064,6 +2362,7 @@ def parse_args(argv=None) -> Config:
         marker_channels=a.marker_channels.split(",") if a.marker_channels else None,
         cofactor=a.cofactor, max_points=a.max_points,
         per_well_plots=a.per_well_plots, save_overlays=a.save_overlays,
+        overlay_line_width=max(1, a.overlay_line_width),
         outdir=a.outdir, upload_rois=a.upload_rois,
         attach_results=a.attach_results, from_csv=a.from_csv,
     )
@@ -2111,6 +2410,14 @@ def main(argv=None) -> int:
                 if screen_kv:
                     LOG.info("Screen-level key-value pairs: %s",
                              ", ".join(sorted(screen_kv)))
+
+        n_targets = len(cfg.plate_ids) + (1 if cfg.screen_id is not None else 0)
+        if (cfg.threshold_scope == "screen" and n_targets > 1
+                and not getattr(cfg, "_pool_screen", False)):
+            LOG.warning("--threshold-scope screen with several plates: each "
+                        "plate's own folder is still gated on that plate's data "
+                        "alone. Add --pool-screen for a genuinely common "
+                        "threshold across plates (written to _pooled/).")
 
         for plate in iter_plates(conn, cfg):
             LOG.info("Plate %s (%s)", plate.getId(), plate.getName())

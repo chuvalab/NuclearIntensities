@@ -24,6 +24,7 @@ channels:
 
 dependencies:
   - python=3.11
+  - setuptools<81          # several deps still import pkg_resources (removed in 82)
 
   # --- OMERO client ----------------------------------------------------------
   - zeroc-ice=3.6.5

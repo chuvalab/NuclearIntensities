@@ -24,6 +24,15 @@ channels:
 dependencies:
   - python=3.10
 
+  # --- CRITICAL PIN ----------------------------------------------------------
+  # setuptools 82 (Feb 2026) REMOVED pkg_resources. StarDist 0.8.5 still does
+  # `from pkg_resources import get_distribution` in bioimageio_utils.py, so a
+  # current setuptools breaks `import stardist` with
+  #   ModuleNotFoundError: No module named 'pkg_resources'
+  # Pinned below the deprecation (81) rather than the removal (82) to avoid the
+  # warning spam as well.
+  - setuptools<81
+
   # --- OMERO client (zeroc-ice is the awkward one; conda-forge has binaries) --
   - zeroc-ice=3.6.5
   - omero-py>=5.17

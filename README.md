@@ -20,6 +20,7 @@ and look at.**
 | `environment.yml` | pinned conda environment (StarDist / TensorFlow 2.10 / Python 3.10) |
 | `environment-cellpose.yml` | alternative environment (Cellpose / PyTorch, no version ceiling) |
 | `requirements.txt` | the same pins for pip, if you can't use conda |
+| `WINDOWS_LATEST_TENSORFLOW.md` | short guide to running current TensorFlow on Windows via WSL2 |
 | `README.md` | this file |
 
 ## Table of contents
@@ -200,9 +201,18 @@ pin comes from. From there the rest follows:
 | cudatoolkit / cudnn | 11.2 / 8.1 | the versions TF 2.10 is built against — newer CUDA will not work |
 | scikit-image | 0.21 | ≥0.19 needed for the region properties used here |
 | zeroc-ice | 3.6.5 | what omero-py talks to the server with |
+| setuptools | <81 | setuptools 82 (Feb 2026) **removed** `pkg_resources`, which StarDist still imports |
 
 Break any one of these and you typically get a silent fallback to CPU, or an
 `ImportError` deep inside TensorFlow that says nothing about versions.
+
+The setuptools pin is the newest of these and catches people out: `pkg_resources`
+was part of setuptools for twenty years and was removed in February 2026, so a
+freshly created environment picks up a setuptools that StarDist cannot import.
+The symptom is `ModuleNotFoundError: No module named 'pkg_resources'` raised from
+`stardist/bioimageio_utils.py` — confusing, because nothing about your code or
+StarDist changed. If you hit it in an environment created before this pin
+existed, `pip install "setuptools<81"` fixes it in place.
 
 Note that **the analysis script itself is not the constraint** — it runs fine on
 numpy 2.x and current pandas/scikit-image. The ceiling comes entirely from
@@ -238,8 +248,9 @@ Worth comparing on a few fields regardless — see
 
 **Option B — run under WSL2.** Windows Subsystem for Linux gives you a real
 Linux environment with current TensorFlow GPU support, so you can use recent
-Python and StarDist together. More setup, but no version ceiling. See
-<https://www.tensorflow.org/install/pip> for the current instructions.
+Python and StarDist together. More setup, but no version ceiling. Step-by-step
+instructions, including the Keras 3 and VPN traps, are in
+**`WINDOWS_LATEST_TENSORFLOW.md`**.
 
 ### macOS
 
@@ -285,11 +296,20 @@ they belong to, so you lose no metadata by working plate by plate. Results are
 written to one folder per plate either way, so a screen run and four separate
 plate runs produce the same files.
 
+**One caveat when comparing plates.** Each plate's own results folder is always
+gated on that plate's data alone — that's what `--threshold-scope plate` (the
+default) means, and it's what you want when plates were stained and imaged
+separately. If you need a *single* threshold applied across several plates so
+the percentages are directly comparable, add `--pool-screen`: the `_pooled/`
+folder re-gates all the plates together. Asking for `--threshold-scope screen`
+without `--pool-screen` doesn't do this, and the script now warns you about it.
+
 Which to use:
 
 | Situation | Use |
 |---|---|
 | Whole experiment, one go | `--screen-id` |
+| A named set of plates | `--plate-id 101,102,103` |
 | Plates arriving over several days | `--plate-id`, one run each as they land |
 | Re-running one plate that failed QC | `--plate-id` |
 | Plate not attached to any screen | `--plate-id` (the only option) |
@@ -366,6 +386,12 @@ exactly once? Common failures and their fixes:
 | Nothing at all found | wrong channel used as DAPI | `--dapi-channel DAPI` or `--dapi-channel 0` |
 
 If foci counting is on, detected foci appear in green inside the outlines.
+
+Outlines are 2 px by default. A 2048x2048 field rendered into a ~1000 px PNG
+halves everything, so a 1 px outline all but disappears — raise it with
+`--overlay-line-width 4` if you're checking segmentation on a large screen, or
+drop to 1 if thick outlines hide the nuclear edge you're trying to judge. The
+same setting scales the contours and foci circles in the zoomed crop montages.
 
 ### (b) `plots/histograms_gated.png` — is the cutoff in the right place?
 
@@ -446,15 +472,123 @@ Things worth reacting to:
 | `No module named 'stardist'` | installed into the wrong environment | `conda activate omeroflow`, then re-check with `--check-env` |
 | Segmentation is slow and `--check-env` says `GPUs visible: 0` | TensorFlow can't see the GPU | on Windows, TF must be exactly 2.10.x with CUDA 11.2 / cuDNN 8.1 — re-create the environment from `environment.yml` |
 | `ImportError` from deep inside TensorFlow | a pin got broken, usually numpy or protobuf | `--check-env` names the offender |
+| `ModuleNotFoundError: No module named 'pkg_resources'` (from inside `stardist`) | setuptools 82 removed `pkg_resources`; StarDist 0.8.5 still imports it | `pip install "setuptools<81"` — nothing else needs reinstalling. Pinned in `environment.yml`. |
+| `Java heap space` / `omero.InternalException` while reading planes | the **server** ran out of memory, not your machine | `--server-tile-height 256`, and ask your admin to raise `omero.jvmcfg.percent.blitz`. See below. |
 | `Could not connect to OMERO at ...` | wrong address, or you're off the network | check the host, connect to your institution's VPN, try `--port 4064` |
 | `Screen 1234 not found (check group/permissions)` | wrong ID, or the data belongs to another group | double-check the ID in OMERO.web; ask the owner to share it |
 | `Channel matching 'DAPI' not found in [...]` | your channels are named something else | the error prints the real names — use one of those, or an index like `--dapi-channel 0` |
 | `Foci channel 'gH2AX' not found in [...]` | same, for the foci channel | use the printed name |
-| `CUDA out of memory` | images too big for the GPU | `--n-tiles 2` (or 4), or `--no-gpu` |
+| `CUDA out of memory` on the very first image | the field is too big for the card | `--n-tiles 2` (or 4), or `--no-gpu` |
+| `Dst tensor is not initialized` / OOM **after a while**, even with tiling | this is GPU memory *accumulating* across predict calls, not one image being too big — more tiling won't help | `--reload-model-every 200`. See below. |
 | Everything is called positive, or nothing is | the automatic threshold failed | see [section 12](#12-how-positivity-is-decided-and-why-its-the-weak-point) — use `--threshold-method control` or `manual` |
 | `every cell was flagged as dead` | `--dead-k` far too low | raise it, or drop `--filter-dead` and inspect `dead_cell_gate.png` first |
 | It's unbearably slow | running on CPU | use a GPU machine, or reduce with `--max-fields 2` |
 | `Cannot write parquet ... falling back to csv.gz` | `pyarrow` missing | harmless; or `conda install -c conda-forge pyarrow` |
+
+### `Java heap space` — the OMERO *server* running out of memory
+
+A traceback ending in
+
+```
+omero.InternalException ... (java.lang.OutOfMemoryError): Java heap space
+    at loci.formats.in.CellWorxReader.openBytes(...)
+    at ome.io.bioformats.BfPixelsWrapper.getWholePlane(...)
+```
+
+is **the server**, not your machine. Nothing you change locally about GPUs or
+Python fixes it directly. Two things are going on:
+
+1. `BfPixelsWrapper` in the stack means the pixel data is being read **through
+   Bio-Formats from your original ImageXpress files** on every request, rather
+   than from OMERO's own pixel store. That happens with in-place imports.
+   Each read re-opens the file and allocates a whole plane in the Java heap.
+2. OMERO's Blitz JVM defaults to **15% of system memory**, which is often only
+   a few hundred MB and is easily exhausted by 2048x2048 planes.
+
+**What the script now does automatically**
+
+- Channel metadata is read with `getChannels(noRE=True)`. Plain `getChannels()`
+  spins up the server-side *rendering engine*, which loads pixel data purely to
+  compute display defaults — a whole-plane allocation for information already
+  present in the channel metadata. This is a common cause of exactly this error.
+- Channel names are cached **per plate** instead of queried per image, removing
+  thousands of round trips on a 384-well plate.
+- The rendering engine is released after every image.
+- On a server heap error it retries that image in horizontal strips, and keeps
+  using strips for the rest of the plate.
+
+**Your quickest lever**
+
+```bash
+--server-tile-height 256
+```
+
+This reads each plane in 256-row strips via `getTile()` rather than one
+`getPlane()` call, so the server allocates a small buffer per request instead of
+a whole plane. The reassembled image is byte-identical; it is purely a transfer
+strategy. Slightly more round trips, much lower server memory.
+
+**Ask your OMERO admin for more heap.** The real fix is server-side:
+
+```bash
+omero config set omero.jvmcfg.percent.blitz 40   # default is 15
+# or explicitly:
+omero config set omero.jvmcfg.strategy.blitz manual
+omero config set omero.jvmcfg.heap_size.blitz 8000   # MB
+omero admin restart
+```
+
+`omero admin jvmcfg` shows the settings that will apply.
+
+**The structural fix.** If the plates were imported in place, the server re-reads
+your original files through Bio-Formats forever. Importing them normally, so
+OMERO generates its own pixel data, removes that whole code path and makes reads
+dramatically cheaper. Worth raising with whoever manages the imports if this
+recurs across projects.
+
+**Don't run plates in parallel against a struggling server.** Elsewhere this
+guide suggests parallel per-plate processes for speed — that advice assumes the
+server has headroom. If you are hitting Java heap errors, parallel runs multiply
+the pressure. Run them sequentially until the heap is raised.
+
+### Running out of GPU memory partway through a screen
+
+If segmentation works for hundreds of images and then fails with
+`InternalError: Failed copying input tensor ... Dst tensor is not initialized`,
+that is TensorFlow's obscure way of saying **the GPU ran out of memory**. The
+telling detail is *when*: a field that is genuinely too large fails on the first
+image. Failing later means memory is accumulating across `predict()` calls, and
+increasing `--n-tiles` will not help — tiling caps the peak memory of one
+forward pass, not the slow creep across thousands of them.
+
+The script defends against this in three ways, automatically:
+
+1. **GPU memory growth is enabled** before the model loads. TensorFlow otherwise
+   reserves nearly all VRAM up front and then fragments it.
+2. **Periodic garbage collection**, every `--gc-every` images (default 50).
+3. **Recovery instead of a lost image.** On an out-of-memory error it frees
+   memory and retries with double the tiling; if that still fails it segments
+   that one field on the CPU and carries on. You lose seconds, not the run.
+
+If it still happens, the definitive fix is to rebuild the model periodically:
+
+```bash
+--reload-model-every 200
+```
+
+This clears the Keras session and reloads StarDist every 200 images, which
+resets any accumulated state. It costs a few seconds each time — negligible
+against a screen. `--gpu-memory-limit 4096` (MB) is also worth trying: capping
+TensorFlow rather than letting it take everything often behaves better on a card
+that is also driving your display.
+
+Two structural alternatives, if you'd rather not fight it:
+
+- **Run plate by plate as separate processes** (`--plate-id`). Memory is
+  reclaimed by the OS when each process exits, so leaks cannot accumulate across
+  a whole screen.
+- **Use `--model cellpose`.** PyTorch's allocator handles long-running inference
+  loops better than TensorFlow 2.10's, and you are not on an end-of-life stack.
 
 **A note on repeating an analysis.** Re-segmenting a whole screen just to change
 a cutoff is a waste of a day. Once the per-nucleus table exists you can re-gate
@@ -1204,6 +1338,7 @@ always computed on the *full* data.
 | `--dapi-channel` | auto | name fragment or index; auto-detects DAPI/Hoechst/405/w1 |
 | `--z-mode` | `mid` | `mid` plane or `mip` max-projection |
 | `--timepoint` | `0` | which timepoint |
+| `--server-tile-height` | `0` | read planes in N-row strips; use `256` if the server throws Java heap errors |
 
 **Segmentation**
 
@@ -1217,6 +1352,9 @@ always computed on the *full* data.
 | `--diameter` | auto | Cellpose expected diameter |
 | `--n-tiles` | off | tile the forward pass if GPU memory is short |
 | `--no-gpu` | off | force CPU |
+| `--gpu-memory-limit` | — | cap TensorFlow's GPU memory in MB, e.g. `4096` |
+| `--gc-every` | `50` | garbage-collect every N images (0 = never) |
+| `--reload-model-every` | `0` | rebuild the model every N images — cures a slow GPU memory leak |
 | `--min-area` / `--max-area` | `30` / `100000` | size window in pixels |
 | `--min-solidity` | `0` | drop ragged/merged objects |
 | `--keep-border` | off | keep nuclei touching the image edge |
@@ -1292,6 +1430,7 @@ always computed on the *full* data.
 | `--max-points` | `50000` | points drawn in scatter plots |
 | `--per-well-plots` | off | full plot set per well |
 | `--save-overlays` | `0` | N segmentation QC images per plate |
+| `--overlay-line-width` | `2` | outline thickness in px for overlays and foci crops |
 | `--outdir` | `./results` | where results go |
 | `--pool-screen` | off | extra analysis pooling all processed plates |
 | `--upload-rois` | off | push masks to OMERO as ROIs |
@@ -1334,6 +1473,11 @@ always computed on the *full* data.
 --group-by Compound          # uses the OMERO key-value pair named "Compound"
 ```
 
+**Long screen that exhausts GPU memory partway through**
+```bash
+--reload-model-every 200 --gpu-memory-limit 4096
+```
+
 **Big screen, fast output**
 ```bash
 --per-nucleus-format parquet --max-points 20000
@@ -1350,9 +1494,11 @@ always computed on the *full* data.
 --plate-id 5678 --outdir ./one_plate
 ```
 
-**Several named plates in one run**
+**Several named plates in one run** (repeatable *and* comma-separated)
 ```bash
---plate-id 101 --plate-id 102 --plate-id 103 --pool-screen
+--plate-id 101,102,103 --pool-screen
+--plate-id 101,102 --plate-id 103        # equivalent
+--screen-id 1234 --plate-id 999          # a screen plus one extra plate
 ```
 
 **Run four plates in parallel** (four terminals, or `&` on one line)
@@ -1360,8 +1506,10 @@ always computed on the *full* data.
 python omero_nuclei_flow.py --plate-id 101 --outdir ./p101 ...
 python omero_nuclei_flow.py --plate-id 102 --outdir ./p102 ...
 ```
-Each process needs its own `--outdir`. Merge the `per_well_summary.csv` files
-afterwards — they have identical columns, so in pandas:
+Each process needs its own `--outdir`. **Only do this if the OMERO server has
+headroom** — parallel clients multiply the server's memory pressure, and are a
+good way to trigger `Java heap space` errors. Merge the `per_well_summary.csv`
+files afterwards — they have identical columns, so in pandas:
 `pd.concat([pd.read_csv(f) for f in glob("p*/**/per_well_summary.csv")])`.
 
 ## 29. Known limitations

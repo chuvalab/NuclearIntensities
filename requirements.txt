@@ -12,6 +12,9 @@
 #   pip install -r requirements.txt
 #   python omero_nuclei_flow.py --check-env
 
+# --- CRITICAL: setuptools 82 removed pkg_resources, which StarDist imports ---
+setuptools<81
+
 # --- OMERO client ------------------------------------------------------------
 zeroc-ice==3.6.5              # install from conda-forge or a Glencoe wheel
 omero-py>=5.17,<6
