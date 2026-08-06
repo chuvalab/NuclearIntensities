@@ -180,6 +180,9 @@ class Config:
     control_sd: float = 3.0
     manual_thresholds: Dict[str, float] = field(default_factory=dict)
     marker_channels: Optional[List[str]] = None
+    subset_analyses: bool = False            # per-panel re-gating
+    subset_sizes: List[int] = field(default_factory=lambda: [1, 2])
+    subset_panels: List[str] = field(default_factory=list)
 
     # plotting
     cofactor: Optional[float] = None
@@ -1869,6 +1872,119 @@ def detect_markers(df: pd.DataFrame, stat: str, cfg: Config) -> List[str]:
     return markers
 
 
+def marker_subsets(markers: Sequence[str], cfg: Config) -> List[Tuple[str, ...]]:
+    """Which marker combinations to analyse as self-contained panels.
+
+    With three markers on a plate, wells stained with only two of them are
+    misdescribed by the plate-wide three-marker classification: a cell that is
+    GFP+RFP+ and simply wasn't stained for Cy5 is reported as 'double' out of a
+    possible three, when for that panel it is the maximum. Re-gating each
+    subset independently makes each one a closed universe whose populations sum
+    to 100%.
+    """
+    if cfg.subset_panels:
+        out = []
+        for spec in cfg.subset_panels:
+            wanted = {s.strip().lower() for s in spec.split("+") if s.strip()}
+            chosen = tuple(m for m in markers if m.lower() in wanted)
+            missing = wanted - {m.lower() for m in chosen}
+            if missing:
+                LOG.warning("Panel '%s': no marker named %s (available: %s)",
+                            spec, ", ".join(sorted(missing)), ", ".join(markers))
+            if len(chosen) < 1:
+                LOG.warning("Panel '%s' matched no markers in %s - skipping",
+                            spec, list(markers))
+                continue
+            out.append(chosen)
+        return out
+
+    sizes = sorted({int(s) for s in cfg.subset_sizes if 1 <= int(s) <= len(markers)})
+    out = []
+    for n in sizes:
+        if n >= len(markers):
+            continue                      # that's the full analysis already
+        out.extend(combinations(markers, n))
+    return out
+
+
+def analyse_subset(df: pd.DataFrame, subset: Sequence[str], cfg: Config,
+                   outdir: Path, tag: str, stat: str) -> pd.DataFrame:
+    """Re-gate and summarise using only `subset` of the markers.
+
+    Positivity per marker is unchanged - the thresholds are the same - but the
+    population classification (negative / single / double / ...) is recomputed
+    over this subset alone, so its classes sum to 100% of the cells.
+    """
+    sub = df.copy()
+    pos_cols = [f"pos_{m}" for m in subset]
+    sub["n_positive"] = sub[pos_cols].sum(axis=1).astype(int)
+    sub["population"] = sub["n_positive"].map(
+        lambda n: POSITIVITY_NAMES.get(n, f"{n}-positive"))
+    sub["combination"] = sub[pos_cols].apply(
+        lambda r: "+".join([m for m, v in zip(subset, r) if v]) + "+" if r.any()
+        else "all-negative", axis=1)
+
+    name = "_".join(safe(m) for m in subset)
+    sdir = outdir / "panels" / name
+    plots = sdir / "plots"
+    plots.mkdir(parents=True, exist_ok=True)
+    label = " + ".join(subset)
+    ptag = f"{tag} | panel: {label}"
+
+    per_well = summarise(sub, list(subset), ["plate", "well", "well_row", "well_col"])
+    kv_cols = [c for c in sub.columns if c.startswith(cfg.kv_prefix)]
+    if kv_cols:
+        per_well = per_well.merge(
+            sub.groupby(["plate", "well"], as_index=False)[kv_cols].first(),
+            on=["plate", "well"], how="left")
+    per_well.to_csv(sdir / "per_well_summary.csv", index=False)
+    summarise(sub, list(subset), ["plate", "well", "field", "image_id"]).to_csv(
+        sdir / "per_image_summary.csv", index=False)
+
+    plot_population_bars(sub, plots / "populations_by_well.png",
+                         f"{ptag} (%)")
+    plot_population_bars(sub, plots / "populations_by_well_counts.png",
+                         f"{ptag} (counts)", counts=True)
+    plot_combinations(sub, plots / "marker_combinations.png",
+                      f"{ptag} - combinations")
+    plot_combinations_by_well(sub, plots / "combinations_by_well.png",
+                              f"{ptag} - which markers (%)")
+    plot_combinations_by_well(sub, plots / "combinations_by_well_counts.png",
+                              f"{ptag} - which markers (counts)", counts=True)
+
+    plot_platemap(per_well, "n_cells", plots / "platemap_n_cells.png",
+                  f"{ptag} - total cells", cbar_label="cells",
+                  cmap="viridis", annotate=True)
+    for pop in [v for _, v in sorted(POSITIVITY_NAMES.items())]:
+        pcol, ncol = f"pct_{pop}", f"n_{pop}"
+        plabel = pop if pop == "negative" else f"{pop} positive"
+        if pcol in per_well.columns and per_well[pcol].sum() > 0:
+            plot_platemap(per_well, pcol, plots / f"platemap_pct_{pop}.png",
+                          f"{ptag} - % {plabel}")
+        if ncol in per_well.columns and per_well[ncol].sum() > 0:
+            plot_platemap(per_well, ncol, plots / f"platemap_n_{pop}.png",
+                          f"{ptag} - {plabel} cells", cbar_label="cells",
+                          cmap="viridis", annotate=True)
+
+    if len(subset) == 2:
+        cofactors = {m: pick_cofactor(sub[f"{stat}_{m}"].to_numpy(), cfg)
+                     for m in subset}
+        thr = {}
+        for m in subset:
+            p, n = sub.loc[sub[f"pos_{m}"], f"{stat}_{m}"], \
+                   sub.loc[~sub[f"pos_{m}"], f"{stat}_{m}"]
+            thr[m] = float(0.5 * (p.quantile(0.05) + n.quantile(0.95))) \
+                if len(p) and len(n) else float(p.min() if len(p) else np.inf)
+        plot_biaxial(sub, subset[0], subset[1], thr, cofactors, stat,
+                     plots / f"biaxial_{safe(subset[0])}_vs_{safe(subset[1])}.png",
+                     ptag, cfg.max_points)
+
+    counts = sub["population"].value_counts()
+    LOG.info("[%s] panel %-28s %s", tag, label,
+             " | ".join(f"{k}: {100*v/len(sub):.1f}%" for k, v in counts.items()))
+    return per_well
+
+
 def analyse(df: pd.DataFrame, cfg: Config, outdir: Path, tag: str,
             conn=None, omero_obj=None) -> pd.DataFrame:
     """Gate, summarise and plot one plate (or a pooled screen)."""
@@ -2055,6 +2171,40 @@ def analyse(df: pd.DataFrame, cfg: Config, outdir: Path, tag: str,
                 plot_biaxial(sub, mx, my, pooled_thr, cofactors, stat,
                              wdir / f"{safe(well)}_biaxial_{safe(mx)}_vs_{safe(my)}.png",
                              f"{tag} {well} - {mx} vs {my}", cfg.max_points)
+
+    # ---- self-contained marker panels -------------------------------------
+    if cfg.subset_analyses and len(markers) > 1:
+        panels = marker_subsets(markers, cfg)
+        if panels:
+            LOG.info("[%s] %d panel analyses (each sums to 100%% on its own "
+                     "markers): %s", tag, len(panels),
+                     "; ".join("+".join(p) for p in panels))
+            index = []
+            for subset in list(panels) + [tuple(markers)]:
+                is_full = len(subset) == len(markers)
+                if is_full:
+                    # The full set IS the top-level analysis - reuse its
+                    # numbers rather than regenerating identical plots, but
+                    # include the row so the index covers every level.
+                    pw = per_well
+                    location = "."
+                else:
+                    pw = analyse_subset(df, subset, cfg, outdir, tag, stat)
+                    location = f"panels/{'_'.join(safe(m) for m in subset)}"
+                row = {"panel": "+".join(subset), "n_markers": len(subset),
+                       "n_cells": int(pw["n_cells"].sum()),
+                       "results_in": location}
+                # every class up to this panel's size exists, even if empty,
+                # so the columns sum to 100% and don't come out as NaN
+                for k in range(len(subset) + 1):
+                    pop = POSITIVITY_NAMES.get(k, f"{k}-positive")
+                    n = int(pw[f"n_{pop}"].sum()) if f"n_{pop}" in pw.columns else 0
+                    row[f"n_{pop}"] = n
+                    row[f"pct_{pop}"] = round(100 * n / max(row["n_cells"], 1), 3)
+                index.append(row)
+            idx = pd.DataFrame(index)
+            (outdir / "panels").mkdir(parents=True, exist_ok=True)
+            idx.to_csv(outdir / "panels" / "panel_index.csv", index=False)
 
     cells_path = write_table(df, outdir / "per_nucleus_measurements",
                              cfg.per_nucleus_format)
@@ -2275,6 +2425,16 @@ def parse_args(argv=None) -> Config:
     g.add_argument("--control-sd", type=float, default=3.0)
     g.add_argument("--manual-thresholds", help="e.g. 'GFP=1200,RFP=800'")
     g.add_argument("--marker-channels", help="restrict gating to these channels")
+    g.add_argument("--subset-analyses", action="store_true",
+                   help="additionally analyse marker subsets as self-contained "
+                        "panels, each summing to 100%% (useful when different "
+                        "wells on a plate use different staining panels)")
+    g.add_argument("--subset-sizes", default="1,2",
+                   help="panel sizes to generate, e.g. '1,2' for every single "
+                        "marker and every pair")
+    g.add_argument("--panel", action="append", default=[], dest="subset_panels",
+                   help="an explicit panel instead of all combinations, e.g. "
+                        "--panel GFP+RFP --panel Cy5; repeatable")
 
     g = p.add_argument_group("Foci detection (gamma-H2AX / 53BP1, optional)")
     g.add_argument("--foci-channel", dest="foci_channels", action="append",
@@ -2419,6 +2579,9 @@ def parse_args(argv=None) -> Config:
         control_wells=a.control_wells.split(",") if a.control_wells else [],
         control_sd=a.control_sd, manual_thresholds=manual,
         marker_channels=a.marker_channels.split(",") if a.marker_channels else None,
+        subset_analyses=a.subset_analyses or bool(a.subset_panels),
+        subset_sizes=[int(s) for s in str(a.subset_sizes).split(",") if s.strip()],
+        subset_panels=a.subset_panels,
         cofactor=a.cofactor, max_points=a.max_points,
         per_well_plots=a.per_well_plots, save_overlays=a.save_overlays,
         overlay_line_width=max(1, a.overlay_line_width),

@@ -621,6 +621,9 @@ results/
 │   ├── per_focus_measurements.csv.gz   one row per focus    (--save-foci-table)
 │   ├── excluded_dead_cells.csv.gz      the nuclei that were removed (--filter-dead)
 │   ├── per_well_summary.csv            one row per well     ← use this for stats
+│   ├── panels/                         self-contained panel analyses (--subset-analyses)
+│   │   ├── panel_index.csv             all panels in one table
+│   │   └── GFP_RFP/                    per-panel summaries + plots, summing to 100%
 │   ├── per_<key>_summary.csv           one row per condition (--group-by)
 │   ├── well_metadata.csv               the OMERO key-value pairs, per well
 │   ├── per_image_summary.csv           one row per field    (QC)
@@ -692,6 +695,69 @@ One row per nucleus. Groups of columns:
 | `population` | how *many* markers: `negative` / `single` / `double` / `triple` / … |
 | `combination` | *which* markers: `GFP+RFP+`, `GFP+Cy5+`, `all-negative`, … |
 | `foci_pos_<channel>` | has at least `--foci-min-count` foci |
+
+### Analysing marker subsets as self-contained panels
+
+With three markers, the plate-wide classification treats every cell as one of
+negative / single / double / triple **out of three**. That is wrong for a well
+stained with only two of those markers: a GFP+RFP+ cell that was never stained
+for Cy5 gets called "double" out of a possible three, when for its actual panel
+it is the maximum. This matters whenever different wells on one plate use
+different staining panels.
+
+`--subset-analyses` re-runs the classification for each marker subset
+separately, so each is a **closed universe**:
+
+```bash
+--subset-analyses                      # every single marker and every pair
+--subset-analyses --subset-sizes 2     # pairs only
+--panel GFP+RFP --panel Cy5            # only the panels you actually used
+```
+
+For each panel you get a full set of outputs under `panels/<panel>/`:
+
+- 1-marker panel: `pct_negative + pct_single = 100%`
+- 2-marker panel: `pct_negative + pct_single + pct_double = 100%`
+
+**The full three-marker analysis is already there** — it's the top-level output
+in the plate folder (`per_well_summary.csv`, `plots/`), which is exactly the
+negative/single/double/triple classification over all three markers, summing to
+100%. It isn't duplicated into `panels/` because that would mean writing every
+plot twice. `--subset-sizes` therefore only generates panels *smaller* than your
+full marker set; asking for `--subset-sizes 1,2,3` with three markers gives the
+same result as `1,2`.
+
+Each panel folder contains its own `per_well_summary.csv`,
+`per_image_summary.csv`, stacked bars (% and counts), plate heatmaps (% and
+counts) and — for a pair — the biaxial quadrant plot for those two markers.
+`panels/panel_index.csv` collects **every level, including the full set**, in
+one table, with a `results_in` column pointing at where each one's detailed
+output lives:
+
+```
+      panel  n_markers  results_in      pct_negative  pct_single  pct_double  pct_triple
+        GFP          1  panels/GFP            54.513      45.487
+    GFP+RFP          2  panels/GFP_RFP        35.737      48.462      15.800
+    GFP+Cy5          2  panels/GFP_Cy5        40.800      47.800      11.400
+GFP+RFP+Cy5          3  .                     26.650      45.413      24.050       3.888
+```
+
+The `.` means the plate folder itself. Every row sums to 100% across the classes
+that apply to it. Blank cells are correct, not missing data: a one-marker panel
+has no double-positive class.
+
+**What is and isn't recomputed.** The per-marker thresholds are *unchanged* —
+`pos_GFP` means the same thing in every panel, so a cell's positivity never
+depends on which panel you look at. Only the population classification and its
+percentages are recalculated over the chosen subset. That is what makes the
+panels comparable to each other and to the full analysis.
+
+**Practical note for mixed-panel plates.** The subsets are computed over all
+wells, because the script has no way to know which wells got which stain. To
+restrict a panel to the wells that actually used it, either run those wells
+separately (`--wells A1,A2,...`), or filter `panels/<panel>/per_well_summary.csv`
+afterwards — if the panel is recorded as an OMERO key-value pair, it will be
+sitting right there as a `kv_` column.
 
 ### Percentages and counts are both plotted
 
@@ -1416,6 +1482,9 @@ always computed on the *full* data.
 | `--control-sd` | `3.0` | SDs above the control mean |
 | `--manual-thresholds` | — | `'GFP=1200,RFP=800'` |
 | `--marker-channels` | all non-DAPI | restrict which channels are gated |
+| `--subset-analyses` | off | also analyse marker subsets as self-contained panels |
+| `--subset-sizes` | `1,2` | which panel sizes to generate |
+| `--panel` | — | an explicit panel, e.g. `--panel GFP+RFP`; repeatable |
 
 **Foci**
 
@@ -1495,6 +1564,12 @@ always computed on the *full* data.
 **Dense nuclei that are being merged**
 ```bash
 --nms-thresh 0.5 --prob-thresh 0.4 --save-overlays 10
+```
+
+**Mixed staining panels on one plate**
+```bash
+--subset-analyses                      # every single marker and every pair
+--panel GFP+RFP --panel GFP+Cy5        # or just the panels you used
 ```
 
 **Summarise by treatment instead of by well**
