@@ -715,12 +715,25 @@ install, no server, and the data stays on the machine.
 With `--export-explorer` the student gets one file to double-click. Embedding is
 skipped automatically above ~80 MB of CSV.
 
+It also has an upstream **cell filter**: window gates on nuclear intensity, area,
+solidity, eccentricity and perimeter, applied before any marker gating — the
+FSC/SSC pre-gate idea. Alongside it is a morphology-versus-intensity density plot
+with the kept cells in colour and the excluded ones in grey, which is the quickest
+way to see whether debris and clumps are inflating your positives. On a test plate
+seeded with 8% debris and 6% clumps, filtering on area and solidity took the
+triple-positive fraction from 2.0% to 0.0%.
+
 Three things worth knowing:
 
 - **It opens showing your numbers.** If the file has `pos_<marker>` columns, the
   explorer recovers the thresholds that produced them, so the first view
   reproduces the pipeline's report exactly. Verified against this pipeline: the
   per-well percentages match to the digit before anything is touched.
+- **Switching the intensity statistic keeps your work.** Shape windows are
+  statistic-independent and carry over untouched; the nuclear-stain window and
+  any hand-set gates are remapped by percentile, so a gate at 38.9% positive on
+  `mean` lands at 38.6% on `integrated` despite a ~150x change of scale. A notice
+  says what was kept and what was rescaled.
 - **Switching a marker off re-derives the populations** over the remaining ones,
   always summing to 100% — the same logic as `--subset-analyses`, done live.
   That's the quickest way to handle a plate with mixed staining panels.

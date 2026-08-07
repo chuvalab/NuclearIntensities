@@ -118,6 +118,34 @@ select,input[type=text],input[type=number]{
 .histWrap{position:relative; height:68px; cursor:ew-resize; touch-action:none}
 .histWrap canvas{position:absolute; inset:0; width:100%; height:100%}
 
+/* ---------- QC range gates ---------- */
+.qcGrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(196px,1fr)); gap:12px 14px}
+.qc{min-width:0}
+.qc-h{display:flex; align-items:center; gap:6px; margin-bottom:2px}
+.qc-h .nm{font-size:11.5px; font-weight:500}
+.qc-h .kind{font-family:var(--mono); font-size:9px; color:var(--faint)}
+.qc-h .sw{margin-left:auto; width:26px; height:14px; border-radius:8px; background:var(--off);
+  border:1px solid var(--line); position:relative; cursor:pointer; flex:none}
+.qc-h .sw::after{content:""; position:absolute; top:1px; left:1px; width:10px; height:10px;
+  border-radius:50%; background:var(--faint); transition:transform .12s, background .12s}
+.qc.on .sw{background:rgba(91,143,249,.25); border-color:var(--c405)}
+.qc.on .sw::after{transform:translateX(12px); background:var(--c405)}
+.qc .rangeWrap{position:relative; height:52px; cursor:ew-resize; touch-action:none}
+.qc .rangeWrap canvas{position:absolute; inset:0; width:100%; height:100%}
+.qc.off .rangeWrap{opacity:.45}
+.qc .lims{display:flex; gap:5px; margin-top:3px}
+.qc .lims input{font-family:var(--mono); font-size:10px; padding:2px 4px; text-align:center;
+  background:var(--panel-2); border:1px solid var(--line); border-radius:2px; width:100%}
+.qc .lims input:disabled{opacity:.4}
+.qcNote{font-family:var(--mono); font-size:10.5px; color:var(--dim)}
+.qcNote b{color:var(--c405); font-weight:500}
+/* the scatter is a companion to the windows, not a feature plot: cap it so
+   the two halves of the card finish at roughly the same height */
+.morphPane{max-width:326px}
+.morphPick{display:flex; gap:6px; align-items:center; margin-bottom:6px}
+.morphPick select{width:auto; flex:1; font-size:10.5px; padding:3px 5px}
+.morphPick span{font-family:var(--mono); font-size:10px; color:var(--faint)}
+
 /* ---------- plots ---------- */
 .grid2{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px}
 /* gates and the flow-style plots sit side by side: you drag on the left and
@@ -165,6 +193,16 @@ select,input[type=text],input[type=number]{
 #err{color:var(--c640); font-family:var(--mono); font-size:11.5px; max-width:620px; text-align:center; min-height:17px}
 .hint{color:var(--faint); font-size:11px; font-family:var(--mono)}
 
+/* transient notice */
+#toast{position:fixed; left:50%; bottom:22px; transform:translate(-50%,14px);
+  background:var(--panel-2); border:1px solid var(--c561); border-left-width:3px;
+  border-radius:var(--r); padding:10px 14px; max-width:620px; z-index:70;
+  opacity:0; pointer-events:none; transition:opacity .18s, transform .18s;
+  font-size:12px; line-height:1.5; box-shadow:0 8px 26px rgba(0,0,0,.45)}
+#toast.show{opacity:1; transform:translate(-50%,0)}
+#toast b{color:var(--c561); font-weight:500}
+#toast .k{font-family:var(--mono); font-size:11px; color:var(--ink)}
+
 /* busy */
 #busy{position:fixed;inset:0;background:rgba(11,16,23,.82);display:none;align-items:center;
   justify-content:center;z-index:60;font-family:var(--mono);font-size:12px;color:var(--c488)}
@@ -199,6 +237,7 @@ select,input[type=text],input[type=number]{
 </div>
 
 <div id="busy">reading…</div>
+<div id="toast" role="status" aria-live="polite"></div>
 
 <div id="app">
   <header>
@@ -246,6 +285,26 @@ select,input[type=text],input[type=number]{
     </aside>
 
     <div class="work">
+      <section class="card" id="qcCard">
+        <div class="sec-h"><span>Cell filter</span>
+          <span class="n">keep a window on each — like an FSC/SSC gate before you look at fluorescence</span>
+          <button class="act" id="qcAuto">auto</button>
+          <button class="act" id="qcOff" style="margin-left:10px">clear</button></div>
+        <div class="split" style="grid-template-columns:minmax(360px,1.7fr) minmax(240px,0.8fr)">
+          <div>
+            <div class="qcGrid" id="qcGrid"></div>
+            <div class="qcNote" id="qcNote" style="margin-top:10px"></div>
+          </div>
+          <div class="morphPane">
+            <div class="morphPick">
+              <select id="mX"></select><span>vs</span><select id="mY"></select>
+            </div>
+            <div class="plot"><canvas id="cMorph"></canvas>
+              <div class="cap">shaded band = cells the filter keeps</div></div>
+          </div>
+        </div>
+      </section>
+
       <div class="split">
         <section class="card">
           <div class="sec-h"><span>Gates</span><span class="n">drag a line, or type a value</span></div>
@@ -489,6 +548,104 @@ function allIdx(){
   return Int32Array.from(out);
 }
 
+/* ---------- cell filter (QC pre-gate) -----------------------
+   A window on the nuclear stain and on shape, applied BEFORE any
+   marker gating - the same move as drawing an FSC/SSC gate before
+   you look at fluorescence. Debris, clumps and dying nuclei are
+   removed once, and everything downstream inherits the selection.
+   ------------------------------------------------------------ */
+const MORPH_META = {
+  area:        { label:"nuclear area",  unit:"px",  log:false },
+  eccentricity:{ label:"eccentricity",  unit:"0–1", log:false },
+  solidity:    { label:"solidity",      unit:"0–1", log:false },
+  perimeter:   { label:"perimeter",     unit:"px",  log:false },
+};
+
+let toastTimer = null;
+function toast(html, ms = 7000){
+  const el = document.getElementById("toast");
+  if(!el) return;
+  el.innerHTML = html;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=> el.classList.remove("show"), ms);
+}
+
+/** Where does `value` sit in `col`, as a fraction of the cells below it? */
+function percentileOf(col, value, idx){
+  const v = S.cols[col]; if(!v) return null;
+  let below = 0, n = 0;
+  const step = Math.max(1, Math.floor(idx.length/20000));
+  for(let i=0;i<idx.length;i+=step){ const x = v[idx[i]];
+    if(!isFinite(x)) continue; n++; if(x <= value) below++; }
+  return n ? below/n : null;
+}
+/** The value at fraction `q` of `col` - the inverse of the above. */
+function quantileOf(col, q, idx){
+  const v = S.cols[col]; if(!v) return null;
+  const s = [];
+  const step = Math.max(1, Math.floor(idx.length/20000));
+  for(let i=0;i<idx.length;i+=step){ const x = v[idx[i]]; if(isFinite(x)) s.push(x); }
+  if(!s.length) return null;
+  s.sort((a,b)=>a-b);
+  return s[Math.min(s.length-1, Math.max(0, Math.round(q*(s.length-1))))];
+}
+/** Carry a limit across a change of intensity statistic by keeping its
+ *  position in the distribution, not its raw number. 1200 counts on the mean
+ *  is meaningless on integrated intensity, but "the 97th percentile" is not. */
+function rescale(oldCol, newCol, value, idx){
+  const q = percentileOf(oldCol, value, idx);
+  if(q === null) return null;
+  return quantileOf(newCol, q, idx);
+}
+
+function detectQC(){
+  const keys = [];
+  if(S.dapi && S.cols[`${S.stat}_${S.dapi}`])
+    keys.push({ key:`${S.stat}_${S.dapi}`, label:S.dapi, kind:"nuclear stain", log:true });
+  for(const m of Object.keys(MORPH_META))
+    if(S.cols[m]) keys.push({ key:m, label:MORPH_META[m].label,
+                              kind:MORPH_META[m].unit, log:MORPH_META[m].log });
+  S.qcKeys = keys;
+  const prev = S.qc || {};
+  S.qc = {};
+  for(const k of keys){
+    const [lo,hi] = dataRange(k.key);
+    // Morphology columns don't depend on the intensity statistic, so an
+    // existing window is carried over untouched rather than reset.
+    S.qc[k.key] = prev[k.key]
+      ? { ...prev[k.key], min:lo, max:hi }
+      : { on:false, lo, hi, min:lo, max:hi };
+  }
+}
+function dataRange(col){
+  const v = S.cols[col];
+  let lo = Infinity, hi = -Infinity;
+  for(let i=0;i<S.rows;i++){ const x = v[i];
+    if(!isFinite(x)) continue; if(x<lo)lo=x; if(x>hi)hi=x; }
+  if(!(hi>lo)){ lo = 0; hi = 1; }
+  return [lo,hi];
+}
+/** Robust window: central 98% of the cells currently in play. */
+function autoWindow(col){
+  const v = S.cols[col], src = S.preActive || S.active;
+  const s = [];
+  const step = Math.max(1, Math.floor(src.length/20000));
+  for(let i=0;i<src.length;i+=step){ const x = v[src[i]]; if(isFinite(x)) s.push(x); }
+  if(s.length < 20) return null;
+  s.sort((a,b)=>a-b);
+  return [s[Math.floor(s.length*0.01)], s[Math.floor(s.length*0.99)]];
+}
+function qcPass(i){
+  for(const k of S.qcKeys){
+    const q = S.qc[k.key]; if(!q.on) continue;
+    const x = S.cols[k.key][i];
+    if(!(x >= q.lo && x <= q.hi)) return false;
+  }
+  return true;
+}
+const qcActive = () => S.qcKeys.some(k => S.qc[k.key].on);
+
 /* ---------- compute ----------------------------------------
    One pass builds, per well, a histogram over marker BITMASKS
    (bit m set = positive for marker m). Everything downstream -
@@ -506,11 +663,23 @@ function recompute(){
   const K = on.length;
   let n = 0;
   for(const k of S.wellOn) n += S.wellIdx.get(k).length;
-  const act = new Int32Array(n);
+  const pre = new Int32Array(n);
   let p = 0;
   for(const k of S.wells){ if(!S.wellOn.has(k)) continue;
-    const a = S.wellIdx.get(k); act.set(a, p); p += a.length; }
-  S.active = act;
+    const a = S.wellIdx.get(k); pre.set(a, p); p += a.length; }
+  S.preActive = pre;                       // wells only - what the QC plots show
+
+  // the cell filter narrows the set everything else works on
+  let act = pre, keep = null;
+  if(qcActive()){
+    keep = new Uint8Array(S.rows);
+    let m = 0;
+    for(let j=0;j<pre.length;j++){ const i = pre[j];
+      if(qcPass(i)){ keep[i] = 1; m++; } }
+    act = new Int32Array(m); let q = 0;
+    for(let j=0;j<pre.length;j++){ const i = pre[j]; if(keep[i]) act[q++] = i; }
+  }
+  S.active = act; S.qcKeep = keep;
   S.markersOn = on; S.nMarkersOn = K;
 
   const cols = on.map(m => S.cols[`${S.stat}_${m}`]);
@@ -519,8 +688,10 @@ function recompute(){
   const mask = S.maskOf && S.maskOf.length === S.rows ? S.maskOf : (S.maskOf = new Uint32Array(S.rows));
 
   const rows = [];
+  const keepMask = S.qcKeep;
   for(const k of S.wells){
-    const a = S.wellIdx.get(k);
+    const a0 = S.wellIdx.get(k);
+    const a = keepMask ? a0.filter(i => keepMask[i]) : a0;
     const hist = new Uint32Array(NBIN);
     for(let j=0;j<a.length;j++){
       const i = a[j]; let mk = 0;
@@ -534,7 +705,8 @@ function recompute(){
       counts[POPCOUNT[b]] += c;
       for(let m=0;m<K;m++) if(b & (1<<m)) posN[m] += c;
     }
-    rows.push({ well:k, on:S.wellOn.has(k), n:a.length, counts, posN, hist });
+    rows.push({ well:k, on:S.wellOn.has(k), n:a.length, nRaw:a0.length,
+                counts, posN, hist });
   }
   S.perWell = rows;
 
@@ -543,7 +715,9 @@ function recompute(){
   const pooled = new Uint32Array(NBIN);
   for(const r of rows) if(r.on) for(let b=0;b<NBIN;b++) pooled[b] += r.hist[b];
   S.pooledHist = pooled;
-  S.cloudKey = [S.plate, S.stat, [...S.wellOn].sort().join(","), on.join(",")].join("|");
+  S.cloudKey = [S.plate, S.stat, [...S.wellOn].sort().join(","), on.join(","),
+    S.qcKeys.map(k=>{const q=S.qc[k.key];
+      return q.on ? `${k.key}:${q.lo}:${q.hi}` : "";}).join(";")].join("|");
 }
 
 /** Quadrant counts for a marker pair, straight from the bitmask histogram. */
@@ -665,10 +839,12 @@ function buildGates(){
   }
   box.querySelectorAll("[data-val]").forEach(inp=>{
     inp.onchange = () => { const v = Number(inp.value.replace(/,/g,""));
-      if(isFinite(v)){ S.thr[inp.dataset.val] = v; refresh(); } };
+      if(isFinite(v)){ S.thr[inp.dataset.val] = v;
+        (S.thrManual = S.thrManual || {})[inp.dataset.val] = true; refresh(); } };
   });
   box.querySelectorAll("[data-rst]").forEach(b=>{
-    b.onclick = () => { S.thr[b.dataset.rst] = S.autoThr[b.dataset.rst]; refresh(); };
+    b.onclick = () => { S.thr[b.dataset.rst] = S.autoThr[b.dataset.rst];
+      if(S.thrManual) delete S.thrManual[b.dataset.rst]; refresh(); };
   });
   box.querySelectorAll("[data-h]").forEach(w => attachDrag(w, w.dataset.h));
 }
@@ -683,6 +859,7 @@ function attachDrag(wrap, m){
     const g = wrap._g; if(!g) return;
     const a = g.lo + (g.hi - g.lo)*Math.max(0, Math.min(1, x));
     S.thr[m] = g.cf*Math.sinh(a);
+    (S.thrManual = S.thrManual || {})[m] = true;
     refresh(true);
   };
   const up = () => { document.removeEventListener("pointermove", set);
@@ -753,6 +930,238 @@ function drawHist(m, overlayOnly){
     g.beginPath(); g.moveTo(x, H-5); g.lineTo(x, H); g.stroke();
     g.fillText(d === 0 ? "0" : "1e"+d, x+2, H-6);
   }
+}
+
+/* ---------- rendering: QC range gates ---------------------- */
+function buildQC(){
+  const box = document.getElementById("qcGrid");
+  box.innerHTML = S.qcKeys.map(k=>`
+    <div class="qc off" data-qc="${k.key}">
+      <div class="qc-h"><span class="nm">${k.label}</span>
+        <span class="kind">${k.kind}</span><span class="sw"></span></div>
+      <div class="rangeWrap"><canvas></canvas></div>
+      <div class="lims">
+        <input data-lo="${k.key}" disabled><input data-hi="${k.key}" disabled>
+      </div>
+    </div>`).join("");
+  box.querySelectorAll("[data-qc]").forEach(el=>{
+    const key = el.dataset.qc;
+    el.querySelector(".sw").onclick = () => {
+      const q = S.qc[key]; q.on = !q.on;
+      if(q.on && q.lo === q.min && q.hi === q.max){
+        const w = autoWindow(key); if(w){ q.lo = w[0]; q.hi = w[1]; }
+      }
+      syncQC(); refresh();
+    };
+    attachRange(el.querySelector(".rangeWrap"), key);
+  });
+  box.querySelectorAll("[data-lo],[data-hi]").forEach(inp=>{
+    inp.onchange = () => {
+      const key = inp.dataset.lo || inp.dataset.hi;
+      const v = Number(inp.value.replace(/,/g,""));
+      if(!isFinite(v)) return;
+      const q = S.qc[key];
+      if(inp.dataset.lo) q.lo = Math.min(v, q.hi); else q.hi = Math.max(v, q.lo);
+      refresh();
+    };
+  });
+  buildMorphPickers();
+}
+function syncQC(){
+  for(const k of S.qcKeys){
+    const el = document.querySelector(`[data-qc="${CSS.escape(k.key)}"]`);
+    if(!el) continue;
+    const q = S.qc[k.key];
+    el.classList.toggle("on", q.on); el.classList.toggle("off", !q.on);
+    const lo = el.querySelector("[data-lo]"), hi = el.querySelector("[data-hi]");
+    lo.disabled = hi.disabled = !q.on;
+    if(document.activeElement !== lo) lo.value = fmtThr(q.lo);
+    if(document.activeElement !== hi) hi.value = fmtThr(q.hi);
+  }
+}
+function attachRange(wrap, key){
+  let grab = null;
+  const posOf = ev => {
+    const r = wrap.getBoundingClientRect();
+    return ((ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left)/r.width;
+  };
+  const move = ev => {
+    const g = wrap._g; if(!g) return;
+    const a = g.lo + (g.hi-g.lo)*Math.max(0, Math.min(1, posOf(ev)));
+    const v = g.inv(a), q = S.qc[key];
+    if(grab === "lo") q.lo = Math.min(v, q.hi); else q.hi = Math.max(v, q.lo);
+    refresh(true);
+  };
+  const up = () => { grab = null;
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", up); refresh(); };
+  wrap.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    const q = S.qc[key]; if(!q.on){ q.on = true;
+      const w = autoWindow(key); if(w && q.lo===q.min && q.hi===q.max){ q.lo=w[0]; q.hi=w[1]; }
+      syncQC(); }
+    const g = wrap._g; if(!g) return;
+    const x = g.lo + (g.hi-g.lo)*posOf(e);
+    grab = Math.abs(x - g.fwd(q.lo)) <= Math.abs(x - g.fwd(q.hi)) ? "lo" : "hi";
+    move(e);
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+  });
+}
+function drawRange(k, overlayOnly){
+  const el = document.querySelector(`[data-qc="${CSS.escape(k.key)}"]`);
+  if(!el) return;
+  const wrap = el.querySelector(".rangeWrap"), cv = wrap.querySelector("canvas");
+  const W = wrap.clientWidth, H = wrap.clientHeight, dpr = devicePixelRatio||1;
+  if(!W) return;
+  cv.width = W*dpr; cv.height = H*dpr;
+  const g = cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+
+  const vals = S.cols[k.key], src = S.preActive || S.active;
+  // QC histograms show every cell in the selected wells, NOT the filtered set -
+  // otherwise the distribution would shift as you drag its own window.
+  const key = [S.plate, [...S.wellOn].sort().join(","), S.stat, k.key, W].join("|");
+  let cache = wrap._bins;
+  if(!cache || cache.key !== key){
+    let cf = 1, fwd, inv;
+    if(k.log){ cf = cofactor(vals, src); fwd = x => asinh(x, cf); inv = a => cf*Math.sinh(a); }
+    else { fwd = x => x; inv = a => a; }
+    let lo = Infinity, hi = -Infinity;
+    const st = Math.max(1, Math.floor(src.length/40000));
+    for(let i=0;i<src.length;i+=st){ const a = fwd(vals[src[i]]);
+      if(!isFinite(a)) continue; if(a<lo)lo=a; if(a>hi)hi=a; }
+    if(!(hi>lo)){ lo = 0; hi = 1; }
+    const padA = (hi-lo)*0.03; lo -= padA; hi += padA;
+    const NB = Math.max(48, Math.floor(W/2.4));
+    const hist = new Float64Array(NB);
+    for(let j=0;j<src.length;j++){ const a = fwd(vals[src[j]]);
+      if(!isFinite(a)) continue;
+      const b = Math.floor((a-lo)/(hi-lo)*NB); if(b>=0&&b<NB) hist[b]++; }
+    let mx = 0; for(const v of hist) if(v>mx) mx = v;
+    cache = { key, lo, hi, fwd, inv, hist, NB, mx: mx||1 };
+    wrap._bins = cache;
+  }
+  const { lo, hi, fwd, inv, hist, NB, mx } = cache;
+  wrap._g = { lo, hi, fwd, inv };
+
+  const q = S.qc[k.key];
+  const xLo = (fwd(q.lo)-lo)/(hi-lo)*W, xHi = (fwd(q.hi)-lo)/(hi-lo)*W;
+  const bw = W/NB;
+  for(let b=0;b<NB;b++){
+    const h = (hist[b]/mx)*(H-9), x = b*bw;
+    const inside = !q.on || (x+bw/2 >= xLo && x+bw/2 <= xHi);
+    g.fillStyle = inside ? (k.log ? css("--c405") : "#6E8BA8") : "#28344688";
+    g.fillRect(x, H-h-1, Math.max(bw-0.4,0.6), h);
+  }
+  if(q.on){
+    g.fillStyle = "rgba(11,16,23,.55)";
+    g.fillRect(0,0,Math.max(0,xLo),H); g.fillRect(xHi,0,Math.max(0,W-xHi),H);
+    g.strokeStyle = css("--c405"); g.lineWidth = 1.5;
+    for(const x of [xLo,xHi]){ g.beginPath(); g.moveTo(x,0); g.lineTo(x,H); g.stroke(); }
+    g.fillStyle = css("--c405");
+    for(const x of [xLo,xHi]) g.fillRect(x-2.5, 0, 5, 4);
+  }
+}
+
+/* ---------- rendering: morphology vs intensity ------------- */
+function buildMorphPickers(){
+  const xs = S.qcKeys.map(k => [k.key, k.label]);
+  const ys = [];
+  if(S.dapi) ys.push([`${S.stat}_${S.dapi}`, S.dapi]);
+  for(const m of S.markers) ys.push([`${S.stat}_${m}`, m]);
+  for(const k of S.qcKeys) if(!k.log) ys.push([k.key, k.label]);
+  const X = document.getElementById("mX"), Y = document.getElementById("mY");
+  X.innerHTML = xs.map(([v,l])=>`<option value="${v}">${l}</option>`).join("");
+  Y.innerHTML = ys.map(([v,l])=>`<option value="${v}">${l}</option>`).join("");
+  S.mX = xs.length ? (xs.find(o=>o[0]==="area") ? "area" : xs[0][0]) : null;
+  S.mY = ys.length > 1 ? ys[1][0] : (ys[0] ? ys[0][0] : null);
+  X.value = S.mX; Y.value = S.mY;
+  X.onchange = () => { S.mX = X.value; drawMorph(); };
+  Y.onchange = () => { S.mY = Y.value; drawMorph(); };
+}
+function drawMorph(){
+  const cv = document.getElementById("cMorph");
+  if(!cv || !S.mX || !S.mY) return;
+  const W = cv.parentElement.clientWidth, H = Math.round(W*0.72), dpr = devicePixelRatio||1;
+  cv.width = W*dpr; cv.height = H*dpr; cv.style.height = H+"px";
+  const g = cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0);
+  g.fillStyle = "#0D141E"; g.fillRect(0,0,W,H);
+
+  const src = S.preActive || S.active;
+  if(!src || !src.length){ note(g,W,H,"no cells"); return; }
+  const vx = S.cols[S.mX], vy = S.cols[S.mY];
+  const kx = S.qcKeys.find(k=>k.key===S.mX);
+  const logX = kx ? kx.log : /^(mean|median|integrated)_/.test(S.mX);
+  const logY = /^(mean|median|integrated)_/.test(S.mY);
+  const cfx = logX ? cofactor(vx,src) : 1, cfy = logY ? cofactor(vy,src) : 1;
+  const fx = x => logX ? asinh(x,cfx) : x, fy = y => logY ? asinh(y,cfy) : y;
+  const pad = W < 300 ? 25 : 30, fs = W < 300 ? 8 : 9;
+  const rng = f => { let lo=Infinity,hi=-Infinity;
+    const st = Math.max(1,Math.floor(src.length/30000));
+    for(let i=0;i<src.length;i+=st){ const a=f(i); if(!isFinite(a))continue;
+      if(a<lo)lo=a; if(a>hi)hi=a; }
+    if(!(hi>lo)){lo=0;hi=1;} const p=(hi-lo)*0.04; return [lo-p,hi+p]; };
+  const [xlo,xhi] = rng(i=>fx(vx[src[i]])), [ylo,yhi] = rng(i=>fy(vy[src[i]]));
+  const X = a => pad + (a-xlo)/(xhi-xlo)*(W-pad-8);
+  const Y = a => H-pad - (a-ylo)/(yhi-ylo)*(H-pad-10);
+
+  // pass band for the x axis, if that axis is being filtered
+  const qx = S.qc[S.mX];
+  if(qx && qx.on){
+    g.fillStyle = "rgba(91,143,249,.10)";
+    g.fillRect(X(fx(qx.lo)), 0, X(fx(qx.hi))-X(fx(qx.lo)), H-pad);
+    g.strokeStyle = css("--c405"); g.lineWidth = 1; g.setLineDash([4,3]);
+    for(const v of [qx.lo,qx.hi]){ const x=X(fx(v));
+      g.beginPath(); g.moveTo(x,0); g.lineTo(x,H-pad); g.stroke(); }
+    g.setLineDash([]);
+  }
+
+  // cells: kept in colour, filtered-out in grey, so you see what you're losing
+  const keep = S.qcKeep;
+  const st = Math.max(1, Math.floor(src.length/45000));
+  const NB = 100, dens = new Float32Array(NB*NB);
+  const ax = [], ay = [], ok = [];
+  for(let i=0;i<src.length;i+=st){
+    const k = src[i], a = fx(vx[k]), b = fy(vy[k]);
+    if(!isFinite(a)||!isFinite(b)) continue;
+    ax.push(a); ay.push(b); ok.push(!keep || keep[k]);
+    const ix = Math.min(NB-1,Math.max(0,Math.floor((a-xlo)/(xhi-xlo)*NB)));
+    const iy = Math.min(NB-1,Math.max(0,Math.floor((b-ylo)/(yhi-ylo)*NB)));
+    dens[iy*NB+ix]++;
+  }
+  let dmax = 0; for(const v of dens) if(v>dmax) dmax = v;
+  if(!dmax) dmax = 1;
+  for(let i=0;i<ax.length;i++){
+    const ix = Math.min(NB-1,Math.max(0,Math.floor((ax[i]-xlo)/(xhi-xlo)*NB)));
+    const iy = Math.min(NB-1,Math.max(0,Math.floor((ay[i]-ylo)/(yhi-ylo)*NB)));
+    g.fillStyle = ok[i] ? ramp(Math.pow(dens[iy*NB+ix]/dmax,0.42)) : "#2C3A4C";
+    g.fillRect(X(ax[i]), Y(ay[i]), 1.5, 1.5);
+  }
+
+  g.strokeStyle = css("--line"); g.beginPath();
+  g.moveTo(pad,H-pad); g.lineTo(W-8,H-pad); g.moveTo(pad,4); g.lineTo(pad,H-pad); g.stroke();
+  g.fillStyle = css("--faint"); g.font = fs+"px "+css("--mono");
+  const nT = W < 300 ? 3 : 4;
+  const ticks = (lo,hi,log,cf) => {
+    const out = [];
+    if(log){ for(let d=0;d<=7;d++){ const v=d===0?0:Math.pow(10,d), a=asinh(v,cf);
+        if(a>=lo&&a<=hi) out.push([a, d===0?"0":"1e"+d]); } }
+    else { for(let i=0;i<=nT;i++){ const a=lo+(hi-lo)*i/nT;
+        out.push([a, Math.abs(a)>=100?a.toFixed(0):a.toFixed(2)]); } }
+    return out; };
+  for(const [a,l] of ticks(xlo,xhi,logX,cfx)){ const x=X(a);
+    g.beginPath(); g.moveTo(x,H-pad); g.lineTo(x,H-pad+3); g.stroke();
+    g.textAlign="center"; g.fillText(l, x, H-pad+13); }
+  for(const [a,l] of ticks(ylo,yhi,logY,cfy)){ const y=Y(a);
+    g.beginPath(); g.moveTo(pad-3,y); g.lineTo(pad,y); g.stroke();
+    g.save(); g.translate(pad-6,y); g.rotate(-Math.PI/2);
+    g.textAlign="center"; g.fillText(l,0,0); g.restore(); }
+  const lx = document.getElementById("mX"), ly = document.getElementById("mY");
+  g.font = (fs+1)+"px "+css("--mono"); g.textAlign="center"; g.fillStyle = css("--dim");
+  g.fillText(lx.options[lx.selectedIndex].text, pad+(W-pad-8)/2, H-3);
+  g.save(); g.translate(9, pad+(H-pad-10)/2); g.rotate(-Math.PI/2);
+  g.fillText(ly.options[ly.selectedIndex].text, 0, 0); g.restore();
+  g.textAlign="left";
 }
 
 /* ---------- rendering: population bars --------------------- */
@@ -966,6 +1375,8 @@ function refresh(light){
       pc.textContent = n ? (100*p/n).toFixed(1)+"%" : "—"; }
     drawHist(m, light);
   }
+  for(const k of S.qcKeys) drawRange(k, light);
+  syncQC();
   if(rafPending) return;
   rafPending = true;
   requestAnimationFrame(()=>{
@@ -976,12 +1387,23 @@ function refresh(light){
     document.querySelectorAll("[data-bi]").forEach(cv=>{
       const [a,b] = cv.dataset.bi.split("|"); drawBiaxial(a,b,light); });
     drawBars("cPop", "pct"); drawBars("cCnt", "count");
-    updateStats();
+    drawMorph(); updateStats();
     if(!light){ drawPlate(); drawTable(); }
   });
 }
 const fmtThr = v => !isFinite(v) ? "" : (Math.abs(v) >= 100 ? v.toFixed(0) : v.toPrecision(4));
 function updateStats(){
+  const note = document.getElementById("qcNote");
+  if(note){
+    const pre = S.preActive ? S.preActive.length : 0;
+    const post = S.active ? S.active.length : 0;
+    note.innerHTML = qcActive()
+      ? `<b>${post.toLocaleString()}</b> of ${pre.toLocaleString()} cells pass `+
+        `(${pre?(100*post/pre).toFixed(1):0}%) — ${(pre-post).toLocaleString()} removed `+
+        `before gating`
+      : `no filter — all <b>${pre.toLocaleString()}</b> cells in the selected wells `+
+        `go through. Switch on a window to exclude debris, clumps or dying nuclei.`;
+  }
   document.getElementById("sCells").textContent = S.active.length.toLocaleString();
   document.getElementById("sTotal").textContent = S.rows.toLocaleString();
   document.getElementById("sWells").textContent = `${S.wellOn.size}/${S.wells.length}`;
@@ -1014,7 +1436,54 @@ function buildSidebar(){
 
   const st = document.getElementById("stat");
   st.innerHTML = S.stats.map(s=>`<option${s===S.stat?" selected":""}>${s}</option>`).join("");
-  st.onchange = () => { S.stat = st.value; initThresholds(); refresh(); };
+  st.onchange = () => {
+    const oldStat = S.stat, newStat = st.value;
+    if(oldStat === newStat) return;
+    const idx = S.preActive && S.preActive.length ? S.preActive : allIdx();
+
+    // Anything keyed on intensity changes scale with the statistic. Carry the
+    // user's choices across by percentile instead of discarding them, and say
+    // plainly what was rescaled - silently resetting a filter is the bug this
+    // replaces.
+    const oldDapi = S.dapi ? `${oldStat}_${S.dapi}` : null;
+    const newDapi = S.dapi ? `${newStat}_${S.dapi}` : null;
+    let dapiWin = null;
+    if(oldDapi && newDapi && S.qc[oldDapi] && S.qc[oldDapi].on && S.cols[newDapi]){
+      const lo = rescale(oldDapi, newDapi, S.qc[oldDapi].lo, idx);
+      const hi = rescale(oldDapi, newDapi, S.qc[oldDapi].hi, idx);
+      if(lo !== null && hi !== null) dapiWin = { lo, hi };
+    }
+    const movedGates = [];
+    const manual = {};
+    for(const m of S.markers){
+      if(!S.thrManual || !S.thrManual[m]) continue;
+      const v = rescale(`${oldStat}_${m}`, `${newStat}_${m}`, S.thr[m], idx);
+      if(v !== null){ manual[m] = v; movedGates.push(m); }
+    }
+
+    S.stat = newStat;
+    if(oldDapi && S.qc[oldDapi]) delete S.qc[oldDapi];
+    detectQC();
+    if(dapiWin && S.qc[newDapi])
+      Object.assign(S.qc[newDapi], { on:true, lo:dapiWin.lo, hi:dapiWin.hi });
+    buildQC();
+    initThresholds();
+    for(const m of movedGates){ S.thr[m] = manual[m]; S.thrManual[m] = true; }
+    refresh();
+
+    const kept = S.qcKeys.filter(k => k.key !== newDapi && S.qc[k.key].on)
+                         .map(k => k.label);
+    const bits = [];
+    if(kept.length) bits.push(`shape windows kept (<span class="k">${kept.join(", ")}</span>)`);
+    if(dapiWin) bits.push(`the ${S.dapi} window was rescaled to the same percentiles`);
+    if(movedGates.length) bits.push(
+      `your manual gates (<span class="k">${movedGates.join(", ")}</span>) were rescaled`);
+    const rest = movedGates.length < S.markers.length
+      ? ` Gates you hadn't touched were re-derived automatically.` : "";
+    toast(`<b>Switched to ${newStat} intensity.</b> ` +
+      (bits.length ? bits.join("; ") + "." : "Thresholds were re-derived for the new scale.") +
+      rest + ` Check the gate positions before trusting the numbers.`, 9000);
+  };
 
   const pl = document.getElementById("plate2");
   pl.innerHTML = S.plates.map(p=>`<option${p===S.plate?" selected":""}>${p}</option>`).join("");
@@ -1044,13 +1513,13 @@ function exportCSV(){
   // so the file still documents its own analysis.
   const kept = S.perWell.filter(r => r.on);
   const dropped = S.wells.filter(w => !S.wellOn.has(w));
-  const head = ["plate","well","n_cells",
+  const head = ["plate","well","n_cells", ...(qcActive()?["n_cells_before_filter"]:[]),
     ...on.map(m=>`n_${m}_positive`), ...on.map(m=>`pct_${m}_positive`),
     ...Array.from({length:K},(_,k)=>`n_${POP_NAMES[k]||k+"pos"}`),
     ...Array.from({length:K},(_,k)=>`pct_${POP_NAMES[k]||k+"pos"}`)];
   const lines = [head.join(",")];
   for(const r of kept){
-    lines.push([S.plate, r.well, r.n,
+    lines.push([S.plate, r.well, r.n, ...(qcActive()?[r.nRaw]:[]),
       ...r.posN, ...r.posN.map(v=> r.n?(100*v/r.n).toFixed(4):""),
       ...Array.from({length:K},(_,k)=>r.counts[k]||0),
       ...Array.from({length:K},(_,k)=> r.n?(100*(r.counts[k]||0)/r.n).toFixed(4):"")].join(","));
@@ -1059,6 +1528,13 @@ function exportCSV(){
   lines.push("# gates applied ("+S.stat+" intensity)");
   for(const m of on) lines.push(`# ${m},${S.thr[m]}`);
   lines.push(`# markers included,"${on.join(" ")}"`);
+  if(qcActive()){
+    lines.push("# cell filter applied before gating");
+    for(const k of S.qcKeys){ const q = S.qc[k.key];
+      if(q.on) lines.push(`# ${k.label} window,${q.lo},${q.hi}`); }
+    const pre = S.preActive.length, post = S.active.length;
+    lines.push(`# cells passing filter,${post} of ${pre} (${(100*post/pre).toFixed(2)}%)`);
+  } else lines.push("# cell filter,none");
   lines.push(`# wells in this file,${kept.length} of ${S.wells.length}`);
   lines.push(`# wells excluded,"${dropped.join(" ")||"none"}"`);
   lines.push(`# cells in this file,${kept.reduce((a,r)=>a+r.n,0)}`);
@@ -1094,11 +1570,12 @@ async function load(file){
     const p = parseCSV(text);
     S.name = file.name; S.header = p.header; S.cols = p.cols; S.rows = p.rows;
     detect();
+    detectQC();
     initThresholds();
     document.getElementById("sFile").textContent = file.name;
     document.getElementById("drop").classList.add("hide");
     document.getElementById("app").classList.add("ready");
-    buildSidebar(); buildGates();
+    buildSidebar(); buildGates(); buildQC();
     recompute();          // plots need an active set before they can draw
     buildBiaxial(); refresh();
   }catch(e){
@@ -1120,7 +1597,8 @@ document.addEventListener("drop", e => { e.preventDefault();
   const f = e.dataTransfer.files[0]; if(f) load(f); });
 
 document.getElementById("bReset").onclick = () => {
-  for(const m of S.markers) S.thr[m] = S.autoThr[m]; refresh(); };
+  for(const m of S.markers) S.thr[m] = S.autoThr[m];
+  S.thrManual = {}; refresh(); };
 document.getElementById("bWells").onclick = () => { S.wellOn = new Set(S.wells); refresh(); };
 document.getElementById("invert").onclick = () => {
   S.wellOn = new Set(S.wells.filter(w => !S.wellOn.has(w))); refresh(); };
@@ -1128,6 +1606,14 @@ document.getElementById("allMark").onclick = () => {
   S.markerOn = new Set(S.markers);
   document.querySelectorAll("[data-m]").forEach(e=>e.classList.remove("off"));
   buildGates(); buildBiaxial(); buildMetrics(); refresh(); };
+document.getElementById("qcAuto").onclick = () => {
+  for(const k of S.qcKeys){ const w = autoWindow(k.key);
+    if(w){ S.qc[k.key].on = true; S.qc[k.key].lo = w[0]; S.qc[k.key].hi = w[1]; } }
+  syncQC(); refresh(); };
+document.getElementById("qcOff").onclick = () => {
+  for(const k of S.qcKeys){ const q = S.qc[k.key];
+    q.on = false; q.lo = q.min; q.hi = q.max; }
+  syncQC(); refresh(); };
 document.getElementById("bExport").onclick = exportCSV;
 document.getElementById("bNew").onclick = () => {
   document.getElementById("app").classList.remove("ready");

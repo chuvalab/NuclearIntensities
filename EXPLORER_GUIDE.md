@@ -24,7 +24,7 @@ about a second to load, after which everything is instant.
 
 ---
 
-## The four things you can change
+## The five things you can change
 
 ### 1. Wells — click the plate
 
@@ -74,11 +74,69 @@ When you open a file produced by the pipeline, the gates start exactly where
 the pipeline put them, so your first view matches your report. Anything you
 change from there is yours.
 
-### 4. Intensity statistic
+### 4. Cell filter — decide which cells count at all
+
+The **Cell filter** panel at the top is a QC step that runs *before* any marker
+gating: keep a window on the nuclear stain and on shape, and only cells inside
+every window go through to the rest of the analysis. It's the same move as
+drawing an FSC/SSC gate on a cytometer before you look at fluorescence.
+
+Each one has a switch and two handles. Drag either handle, or type exact limits.
+**auto** sets every window to the central 98% of your cells, which is a
+reasonable starting point; **clear** switches them all off again.
+
+What each is good for:
+
+| Window | Catches |
+|---|---|
+| DAPI intensity | dim debris at the bottom; bright condensed apoptotic and mitotic nuclei at the top |
+| nuclear area | fragments below, merged clumps above |
+| solidity | ragged or merged outlines — a real nucleus is close to 1.0 |
+| eccentricity | very elongated objects that usually aren't single nuclei |
+| perimeter | another handle on fragments and clumps |
+
+**The plot on the right is the point of this panel.** It shows any morphology
+measure against any intensity, with the cells your filter keeps in colour and
+the ones it removes in grey, so you can see *what you are throwing away* and
+whether shape actually relates to signal. Plot nuclear area against a marker and
+you will often find debris sitting as a separate cloud at low area, and clumps
+as a second cloud at high area — both of them non-specifically bright, both of
+them inflating your double and triple positives.
+
+That effect is not hypothetical. On a test plate with 8% debris and 6% clumps
+deliberately added, filtering on area and solidity took the triple-positive
+fraction from 2.0% to 0.0% — every one of those "triple positives" was an
+artefact.
+
+The counter under the windows always tells you what the filter costs
+("37,194 of 44,160 cells pass"), and the export records the exact windows.
+
+**Be careful here.** This is the easiest place in the whole tool to delete
+inconvenient cells. Choose windows from the *shape* of the distributions and
+from what the images look like, not from what happens to your p-value, and use
+the same windows for treated and control wells.
+
+### 5. Intensity statistic
 
 `mean` is concentration-like and the usual choice. `median` ignores a few
 bright specks of debris. `integrated` is the total per nucleus, so it scales
-with nuclear size. Changing this re-derives the automatic thresholds.
+with nuclear size.
+
+**Switching this does not throw your work away.** The shape windows (area,
+solidity, eccentricity, perimeter) don't depend on the statistic at all, so they
+carry over untouched. The nuclear-stain window and any gate you set by hand *are*
+on a scale that changes — 900 counts of mean intensity is a different thing from
+900 of integrated — so they're carried across **by percentile**: whatever
+fraction of cells your limit sat above, it sits above the same fraction
+afterwards. A notice tells you what was kept and what was rescaled.
+
+In practice that means your positive fraction barely moves. Going from `mean` to
+`integrated` changes the raw numbers by a factor of a hundred or more, but a
+manual GFP gate at 38.9% positive comes out at 38.6%.
+
+Gates you never touched are re-derived automatically for the new scale, which is
+what you want — the automatic threshold is specific to the statistic. Either way,
+glance at the gate positions afterwards.
 
 ---
 
