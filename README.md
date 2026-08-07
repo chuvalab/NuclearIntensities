@@ -21,7 +21,9 @@ and look at.**
 | `environment-cellpose.yml` | alternative environment (Cellpose / PyTorch, no version ceiling) |
 | `requirements.txt` | the same pins for pip, if you can't use conda |
 | `gating_explorer.html` | interactive browser tool for post-hoc re-gating (no install) |
-| `EXPLORER_GUIDE.md` | student-facing guide to the explorer |
+| `EXPLORER_GUIDE.md` | student-facing guide to the gating explorer |
+| `condition_explorer.html` | group replicate wells into conditions and compare them |
+| `CONDITION_EXPLORER_GUIDE.md` | guide to the condition explorer |
 | `WINDOWS_LATEST_TENSORFLOW.md` | short guide to running current TensorFlow on Windows via WSL2 |
 | `README.md` | this file |
 
@@ -757,6 +759,35 @@ is the practical ceiling.
 
 `EXPLORER_GUIDE.md` is written for students, and includes a section on the ways
 interactive gating invites you to fool yourself.
+
+### Comparing replicate wells: the Condition Explorer
+
+`condition_explorer.html` is a second browser tool for the step after gating:
+grouping replicate wells into conditions and testing between them. Load a
+`per_well_summary.csv`, the Gating Explorer's export, or a per-nucleus file;
+group wells automatically from an OMERO key–value column or by painting them on
+the plate; then read the result.
+
+It is built around one rule: **n is the number of wells, never the number of
+cells.** Pooling cells across a condition and running a t-test is
+pseudo-replication and produces meaningless p-values.
+
+- **SuperPlot** — every well drawn as a dot, with mean and 95% CI. Bars hide the
+  spread that matters at n = 3–6.
+- **Estimation plot** — each condition minus the reference with a bootstrap 95%
+  CI, on the measured scale, so you see how big the difference is rather than
+  only that it isn't zero.
+- **Tests** — Welch's t / Welch's ANOVA by default (no equal-variance
+  assumption), with Student's and rank-based alternatives, Hedges' *g* with CI,
+  and Holm or Benjamini–Hochberg correction across all pairs.
+- **Warnings** when n < 3, when n = 3 throughout, when wells are unassigned, and
+  when many comparisons run uncorrected.
+
+Every test is validated against `scipy.stats` — Welch, Student, Mann–Whitney,
+ANOVA, Kruskal–Wallis, Hedges' *g*, CIs, Holm and BH — agreeing to within
+3.6 × 10⁻¹⁴.
+
+See `CONDITION_EXPLORER_GUIDE.md`.
 
 ### Analysing marker subsets as self-contained panels
 

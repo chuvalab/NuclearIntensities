@@ -10,11 +10,11 @@
 <style>
 :root{
   /* Palette derived from fluorophore emission, on microscope-room dark */
-  --void:#0B1017; --panel:#141C28; --panel-2:#1B2534; --line:#243244;
-  --ink:#E8EEF6; --dim:#7D8FA6; --faint:#4A5B72;
+  --void:#0B1017; --panel:#141C28; --panel-2:#1B2534; --line:#2C3D52;
+  --ink:#F1F5F9; --dim:#A7B3C3; --faint:#7A8EA9;
   --c405:#5B8FF9; --c488:#3FD16B; --c561:#FFA23D; --c640:#FF5470; --c680:#C77DFF;
   --gate:#FFD84D;              /* deliberately not a fluorophore colour */
-  --off:#2A3648;
+  --off:#33455C;
   --r:3px;
   --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
   --sans:'Space Grotesk',ui-sans-serif,system-ui,-apple-system,sans-serif;
@@ -46,7 +46,7 @@ header .sp{flex:1}
   padding:5px 11px; font-size:11.5px; cursor:pointer; white-space:nowrap;
   transition:border-color .12s, background .12s;
 }
-.btn:hover{border-color:var(--faint); background:#212C3D}
+.btn:hover{border-color:var(--faint); background:#26344A}
 .btn.primary{border-color:var(--c488); color:var(--c488)}
 .btn.primary:hover{background:rgba(63,209,107,.1)}
 
@@ -127,7 +127,7 @@ select,input[type=text],input[type=number]{
 .qc-h .sw{margin-left:auto; width:26px; height:14px; border-radius:8px; background:var(--off);
   border:1px solid var(--line); position:relative; cursor:pointer; flex:none}
 .qc-h .sw::after{content:""; position:absolute; top:1px; left:1px; width:10px; height:10px;
-  border-radius:50%; background:var(--faint); transition:transform .12s, background .12s}
+  border-radius:50%; background:var(--dim); transition:transform .12s, background .12s}
 .qc.on .sw{background:rgba(91,143,249,.25); border-color:var(--c405)}
 .qc.on .sw::after{transform:translateX(12px); background:var(--c405)}
 .qc .rangeWrap{position:relative; height:52px; cursor:ew-resize; touch-action:none}
@@ -169,7 +169,7 @@ select,input[type=text],input[type=number]{
   font-size:9.5px; letter-spacing:.04em; text-transform:uppercase; white-space:nowrap;
 }
 .tbl th:first-child,.tbl td:first-child{text-align:left}
-.tbl td{padding:4px 7px; border-bottom:1px solid #1A2432; font-variant-numeric:tabular-nums; text-align:right; white-space:nowrap}
+.tbl td{padding:4px 7px; border-bottom:1px solid #22303F; font-variant-numeric:tabular-nums; text-align:right; white-space:nowrap}
 .tbl tr:hover td{background:var(--panel-2)}
 .tblScroll{max-height:290px; overflow:auto}
 
@@ -344,7 +344,7 @@ select,input[type=text],input[type=number]{
 
 const CH_COLORS = ["--c488","--c561","--c640","--c680","--c405"];
 const POP_NAMES = ["negative","single","double","triple","quadruple","quintuple"];
-const POP_COLORS = ["#2A3648","#4C6B8A","#3FD16B","#FFD84D","#FFA23D","#FF5470"];
+const POP_COLORS = ["#415470","#5E82A8","#3FD16B","#FFD84D","#FFA23D","#FF5470"];
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
 const S = {              // application state
@@ -752,7 +752,7 @@ function metricValue(r){
 }
 function ramp(t){ // perceptual-ish dark→cyan→green→yellow, distinct from the fluorophores
   t = Math.max(0, Math.min(1, t));
-  const stops = [[18,26,38],[24,74,96],[32,132,120],[80,190,110],[240,216,77]];
+  const stops = [[30,42,58],[26,84,108],[34,142,128],[86,198,116],[244,220,88]];
   const x = t*(stops.length-1), i = Math.min(stops.length-2, Math.floor(x)), f = x-i;
   const a = stops[i], b = stops[i+1];
   return `rgb(${Math.round(a[0]+(b[0]-a[0])*f)},${Math.round(a[1]+(b[1]-a[1])*f)},${Math.round(a[2]+(b[2]-a[2])*f)})`;
@@ -911,7 +911,7 @@ function drawHist(m, overlayOnly){
   for(let b=0;b<NB;b++){
     const h = (hist[b]/mx)*(H-12);
     const x = b*bw, a = lo + (b+0.5)/NB*(hi-lo);
-    g.fillStyle = a > thrA ? col : "#33445C";
+    g.fillStyle = a > thrA ? col : "#4E678C";
     g.fillRect(x, H-h-1, Math.max(bw-0.4, 0.6), h);
   }
   // gate line
@@ -921,7 +921,7 @@ function drawHist(m, overlayOnly){
   g.fillStyle = css("--gate");
   g.beginPath(); g.moveTo(gx-4, 0); g.lineTo(gx+4, 0); g.lineTo(gx, 6); g.fill();
   // decade ticks
-  g.strokeStyle = "#1E2A3A"; g.lineWidth = 1; g.font = "9px "+css("--mono");
+  g.strokeStyle = "#324660"; g.lineWidth = 1; g.font = "9px "+css("--mono");
   g.fillStyle = css("--faint");
   for(let d=0;d<=7;d++){
     const v = d === 0 ? 0 : Math.pow(10,d);
@@ -1050,7 +1050,7 @@ function drawRange(k, overlayOnly){
   for(let b=0;b<NB;b++){
     const h = (hist[b]/mx)*(H-9), x = b*bw;
     const inside = !q.on || (x+bw/2 >= xLo && x+bw/2 <= xHi);
-    g.fillStyle = inside ? (k.log ? css("--c405") : "#6E8BA8") : "#28344688";
+    g.fillStyle = inside ? (k.log ? css("--c405") : "#7B96B0") : "#3A4A6088";
     g.fillRect(x, H-h-1, Math.max(bw-0.4,0.6), h);
   }
   if(q.on){
@@ -1085,7 +1085,7 @@ function drawMorph(){
   const W = cv.parentElement.clientWidth, H = Math.round(W*0.72), dpr = devicePixelRatio||1;
   cv.width = W*dpr; cv.height = H*dpr; cv.style.height = H+"px";
   const g = cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0);
-  g.fillStyle = "#0D141E"; g.fillRect(0,0,W,H);
+  g.fillStyle = "#101823"; g.fillRect(0,0,W,H);
 
   const src = S.preActive || S.active;
   if(!src || !src.length){ note(g,W,H,"no cells"); return; }
@@ -1134,7 +1134,7 @@ function drawMorph(){
   for(let i=0;i<ax.length;i++){
     const ix = Math.min(NB-1,Math.max(0,Math.floor((ax[i]-xlo)/(xhi-xlo)*NB)));
     const iy = Math.min(NB-1,Math.max(0,Math.floor((ay[i]-ylo)/(yhi-ylo)*NB)));
-    g.fillStyle = ok[i] ? ramp(Math.pow(dens[iy*NB+ix]/dmax,0.42)) : "#2C3A4C";
+    g.fillStyle = ok[i] ? ramp(Math.pow(dens[iy*NB+ix]/dmax,0.42)) : "#445A75";
     g.fillRect(X(ax[i]), Y(ay[i]), 1.5, 1.5);
   }
 
@@ -1251,7 +1251,7 @@ function buildCloud(cv, mx, my, W, H, dpr){
   const off = document.createElement("canvas");
   off.width = W*dpr; off.height = H*dpr;
   const g = off.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0);
-  g.fillStyle = "#0D141E"; g.fillRect(0,0,W,H);
+  g.fillStyle = "#101823"; g.fillRect(0,0,W,H);
 
   const cfx = cofactor(vx,act), cfy = cofactor(vy,act);
   // Small multiples: shrink the furniture so the data keeps the space.
