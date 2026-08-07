@@ -20,6 +20,8 @@ and look at.**
 | `environment.yml` | pinned conda environment (StarDist / TensorFlow 2.10 / Python 3.10) |
 | `environment-cellpose.yml` | alternative environment (Cellpose / PyTorch, no version ceiling) |
 | `requirements.txt` | the same pins for pip, if you can't use conda |
+| `gating_explorer.html` | interactive browser tool for post-hoc re-gating (no install) |
+| `EXPLORER_GUIDE.md` | student-facing guide to the explorer |
 | `WINDOWS_LATEST_TENSORFLOW.md` | short guide to running current TensorFlow on Windows via WSL2 |
 | `README.md` | this file |
 
@@ -695,6 +697,51 @@ One row per nucleus. Groups of columns:
 | `population` | how *many* markers: `negative` / `single` / `double` / `triple` / … |
 | `combination` | *which* markers: `GFP+RFP+`, `GFP+Cy5+`, `all-negative`, … |
 | `foci_pos_<channel>` | has at least `--foci-min-count` foci |
+
+### Interactive re-gating in the browser
+
+`gating_explorer.html` is a self-contained web page for post-hoc analysis — made
+for handing to students. Open it, drop in a `per_nucleus_measurements.csv`, and
+you can click wells in or out of the analysis, switch markers on and off, and
+drag the gates, with every plot, percentage and table recomputing live. No
+install, no server, and the data stays on the machine.
+
+```bash
+--export-explorer          # writes gating_explorer.html next to the results,
+                           # with the per-nucleus data already inside it
+--explorer-no-embed        # smaller file; drop the CSV in by hand
+```
+
+With `--export-explorer` the student gets one file to double-click. Embedding is
+skipped automatically above ~80 MB of CSV.
+
+Three things worth knowing:
+
+- **It opens showing your numbers.** If the file has `pos_<marker>` columns, the
+  explorer recovers the thresholds that produced them, so the first view
+  reproduces the pipeline's report exactly. Verified against this pipeline: the
+  per-well percentages match to the digit before anything is touched.
+- **Switching a marker off re-derives the populations** over the remaining ones,
+  always summing to 100% — the same logic as `--subset-analyses`, done live.
+  That's the quickest way to handle a plate with mixed staining panels.
+- **The flow-cytometry plots are live, and sit beside the gates.** Every marker
+  pair gets a density biaxial with the gate crosshair and quadrant percentages,
+  redrawn as the gate is dragged — drag on the left, watch the quadrants move on
+  the right. The density cloud is cached and only the overlay repaints, and
+  quadrant counts come from a per-well histogram over marker bitmasks rather
+  than a fresh pass over the cells — so a drag frame costs ~17 ms on a
+  quarter-million nuclei instead of ~79 ms.
+- **Export summary** writes a per-well CSV whose trailing comment lines record
+  the gates used, the markers included and the wells excluded, so the analysis
+  documents itself.
+
+Performance: a 96-well plate at 250,000 nuclei parses in about a second and
+holds ~60 fps while a gate is dragged, with the biaxial plots, histograms,
+population bars and quadrant statistics all updating. Roughly a million nuclei
+is the practical ceiling.
+
+`EXPLORER_GUIDE.md` is written for students, and includes a section on the ways
+interactive gating invites you to fool yourself.
 
 ### Analysing marker subsets as self-contained panels
 
@@ -1524,6 +1571,8 @@ always computed on the *full* data.
 |---|---|---|
 | `--per-nucleus-format` | `csv.gz` | `csv`, `csv.gz`, `parquet`, `xlsx`, `none` |
 | `--save-foci-table` | off | one row per focus |
+| `--export-explorer` | off | write the interactive HTML explorer next to the results |
+| `--explorer-no-embed` | off | write the explorer without inlining the data |
 | `--cofactor` | auto | asinh cofactor |
 | `--max-points` | `50000` | points drawn in scatter plots |
 | `--per-well-plots` | off | full plot set per well |
@@ -1570,6 +1619,11 @@ always computed on the *full* data.
 ```bash
 --subset-analyses                      # every single marker and every pair
 --panel GFP+RFP --panel GFP+Cy5        # or just the panels you used
+```
+
+**Hand a plate to a student for interactive re-gating**
+```bash
+--export-explorer --per-nucleus-format csv
 ```
 
 **Summarise by treatment instead of by well**

@@ -171,6 +171,8 @@ class Config:
     # tables
     per_nucleus_format: str = "csv.gz"       # csv | csv.gz | parquet | xlsx | none
     save_foci_table: bool = False
+    export_explorer: bool = False            # write the interactive HTML explorer
+    explorer_no_embed: bool = False          # don't inline the data
 
     # gating
     threshold_method: str = "otsu"           # otsu | gmm | quantile | control | manual
@@ -1614,6 +1616,47 @@ def attach_file(conn, obj, path: Path, ns="omero_nuclei_flow"):
 # --------------------------------------------------------------------------- #
 
 
+EXPLORER_NAME = "gating_explorer.html"
+
+
+def write_explorer(df: pd.DataFrame, outdir: Path, tag: str,
+                   embed: bool = True) -> Optional[Path]:
+    """Copy the interactive explorer next to the results, data optionally inlined.
+
+    Looks for gating_explorer.html beside this script. Embedding makes the
+    output a single file a student can double-click - no file dialog, no server,
+    no Python. Above ~80 MB of CSV we skip embedding, because the browser has to
+    hold the string and the parsed columns at once.
+    """
+    src = Path(__file__).resolve().parent / EXPLORER_NAME
+    if not src.exists():
+        LOG.warning("Explorer template not found next to the script (%s) - "
+                    "skipping --export-explorer", src)
+        return None
+    html = src.read_text(encoding="utf-8")
+    dest = outdir / EXPLORER_NAME
+
+    if embed:
+        csv = df.to_csv(index=False)
+        mb = len(csv) / 1e6
+        if mb > 80:
+            LOG.warning("Per-nucleus table is %.0f MB - writing the explorer "
+                        "without embedded data; open the CSV from it instead.", mb)
+            embed = False
+        else:
+            payload = json.dumps(csv)
+            html = html.replace(
+                "if(window.EMBEDDED_CSV){",
+                f"window.EMBEDDED_CSV = {payload};\n"
+                f"window.EMBEDDED_NAME = {json.dumps(safe(tag) + '.csv')};\n"
+                "if(window.EMBEDDED_CSV){", 1)
+            LOG.info("Explorer written with %.1f MB of data embedded", mb)
+    dest.write_text(html, encoding="utf-8")
+    if not embed:
+        LOG.info("Explorer written (open it and drop the per-nucleus CSV in)")
+    return dest
+
+
 def write_table(df: pd.DataFrame, stem: Path, fmt: str) -> Optional[Path]:
     """Write a dataframe in the requested format. Returns the path written."""
     fmt = (fmt or "csv.gz").lower()
@@ -2220,6 +2263,9 @@ def analyse(df: pd.DataFrame, cfg: Config, outdir: Path, tag: str,
              " | ".join(f"{p}: {100*(df['population'] == p).mean():.1f}%"
                         for p in df["population"].value_counts().index))
 
+    if cfg.export_explorer:
+        write_explorer(df, outdir, tag, embed=not cfg.explorer_no_embed)
+
     if conn is not None and cfg.attach_results and omero_obj is not None:
         targets = [p for p in [cells_path, outdir / "per_well_summary.csv",
                                outdir / "thresholds.json"] if p is not None]
@@ -2496,6 +2542,12 @@ def parse_args(argv=None) -> Config:
                    help="format for the per-nucleus table ('none' to skip)")
     g.add_argument("--save-foci-table", action="store_true",
                    help="also write one row per detected focus")
+    g.add_argument("--export-explorer", action="store_true",
+                   help="write gating_explorer.html next to the results, with "
+                        "the per-nucleus data embedded, for interactive re-gating")
+    g.add_argument("--explorer-no-embed", action="store_true",
+                   help="write the explorer without inlining the data "
+                        "(smaller file; drop the CSV in by hand)")
     g.add_argument("--cofactor", type=float, help="asinh cofactor (auto if unset)")
     g.add_argument("--max-points", type=int, default=50000)
     g.add_argument("--per-well-plots", action="store_true")
@@ -2571,6 +2623,7 @@ def parse_args(argv=None) -> Config:
         foci_bg_clip=not a.no_foci_bg_clip, save_foci_crops=a.save_foci_crops,
         per_nucleus_format=a.per_nucleus_format,
         save_foci_table=a.save_foci_table,
+        export_explorer=a.export_explorer, explorer_no_embed=a.explorer_no_embed,
         fetch_kv=not a.no_key_values,
         kv_levels=[s.strip().lower() for s in a.kv_levels.split(",") if s.strip()],
         kv_prefix=kv_prefix, group_by=a.group_by,
