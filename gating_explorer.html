@@ -1038,13 +1038,19 @@ function buildMetrics(){
 /* ---------- export ----------------------------------------- */
 function exportCSV(){
   const on = S.markersOn, K = S.nMarkersOn+1;
-  const head = ["plate","well","included","n_cells",
+  // Excluded wells are left out of the table entirely rather than flagged -
+  // a column of zeros invites someone downstream to average over it by
+  // accident. Which wells were dropped is recorded in the trailing comments,
+  // so the file still documents its own analysis.
+  const kept = S.perWell.filter(r => r.on);
+  const dropped = S.wells.filter(w => !S.wellOn.has(w));
+  const head = ["plate","well","n_cells",
     ...on.map(m=>`n_${m}_positive`), ...on.map(m=>`pct_${m}_positive`),
     ...Array.from({length:K},(_,k)=>`n_${POP_NAMES[k]||k+"pos"}`),
     ...Array.from({length:K},(_,k)=>`pct_${POP_NAMES[k]||k+"pos"}`)];
   const lines = [head.join(",")];
-  for(const r of S.perWell){
-    lines.push([S.plate, r.well, r.on?1:0, r.n,
+  for(const r of kept){
+    lines.push([S.plate, r.well, r.n,
       ...r.posN, ...r.posN.map(v=> r.n?(100*v/r.n).toFixed(4):""),
       ...Array.from({length:K},(_,k)=>r.counts[k]||0),
       ...Array.from({length:K},(_,k)=> r.n?(100*(r.counts[k]||0)/r.n).toFixed(4):"")].join(","));
@@ -1053,7 +1059,9 @@ function exportCSV(){
   lines.push("# gates applied ("+S.stat+" intensity)");
   for(const m of on) lines.push(`# ${m},${S.thr[m]}`);
   lines.push(`# markers included,"${on.join(" ")}"`);
-  lines.push(`# wells excluded,"${S.wells.filter(w=>!S.wellOn.has(w)).join(" ")||"none"}"`);
+  lines.push(`# wells in this file,${kept.length} of ${S.wells.length}`);
+  lines.push(`# wells excluded,"${dropped.join(" ")||"none"}"`);
+  lines.push(`# cells in this file,${kept.reduce((a,r)=>a+r.n,0)}`);
   lines.push(`# source,${S.name}`);
   lines.push(`# exported,${new Date().toISOString()}`);
   const blob = new Blob([lines.join("\n")], {type:"text/csv"});

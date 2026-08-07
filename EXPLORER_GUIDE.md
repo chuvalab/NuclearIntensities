@@ -109,10 +109,27 @@ with nuclear size. Changing this re-derives the automatic thresholds.
 
 ## Getting your results out
 
-**Export summary** downloads a CSV with one row per well: cell counts,
-per-marker positives, and every population as both counts and percentages. The
-last few lines record the gates you used, which markers were on, and which
-wells you excluded — so the file documents its own analysis.
+**Export summary** downloads a CSV with one row per **included** well: cell
+counts, per-marker positives, and every population as both counts and
+percentages. Wells you excluded are simply not in the table, so you can average
+a column or paste it into Prism without first filtering anything out.
+
+The excluded wells are not forgotten — the comment lines at the bottom record
+which ones you dropped, along with the gates you used, which markers were on,
+and how many cells the file covers:
+
+```
+# gates applied (mean intensity)
+# GFP,414.065
+# RFP,331.107
+# markers included,"GFP RFP Cy5"
+# wells in this file,93 of 96
+# wells excluded,"A1 B2 H12"
+# cells in this file,39060
+```
+
+Most tools ignore lines starting with `#`. In pandas, use
+`pd.read_csv(path, comment="#")`.
 
 Keep that file. If someone asks how you got a number, the answer is in it.
 

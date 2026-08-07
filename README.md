@@ -731,9 +731,11 @@ Three things worth knowing:
   quadrant counts come from a per-well histogram over marker bitmasks rather
   than a fresh pass over the cells — so a drag frame costs ~17 ms on a
   quarter-million nuclei instead of ~79 ms.
-- **Export summary** writes a per-well CSV whose trailing comment lines record
-  the gates used, the markers included and the wells excluded, so the analysis
-  documents itself.
+- **Export summary** writes a per-well CSV containing only the included wells —
+  excluded ones are left out rather than flagged, so a column of zeros can't be
+  averaged over by mistake. Trailing comment lines record the gates used, the
+  markers included, the wells dropped and the cell count, so the analysis
+  documents itself. Read it with `pd.read_csv(path, comment="#")`.
 
 Performance: a 96-well plate at 250,000 nuclei parses in about a second and
 holds ~60 fps while a gate is dragged, with the biaxial plots, histograms,
