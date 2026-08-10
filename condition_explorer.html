@@ -85,6 +85,43 @@ aside{border-right:1px solid var(--line); background:var(--panel);
   padding:0 3px; line-height:1}
 .grp .rm:hover{color:var(--bad)}
 .hint{color:var(--faint); font-size:11px; font-family:var(--mono); line-height:1.5}
+.roles{border:1px solid var(--line); border-left:3px solid var(--g0);
+  border-radius:var(--r); padding:7px 9px; margin-bottom:10px; font-size:11px;
+  line-height:1.6; color:var(--dim)}
+.roles b{color:var(--ink); font-weight:500}
+.roles .bad{color:var(--bad)}
+.roles code{font-family:var(--mono); font-size:10.5px; color:var(--g1)}
+.fhdr{display:flex; align-items:center; gap:7px; margin-bottom:5px}
+.fhdr .fkey{font-family:var(--mono); font-size:9.5px; color:var(--faint);
+  border:1px solid var(--line); border-radius:3px; padding:0 4px}
+.fhdr .fname{flex:1; min-width:0; background:none; border:0; padding:2px 4px;
+  border-radius:2px; font-size:12px; font-weight:500}
+.fhdr .fname:hover,.fhdr .fname:focus{background:var(--panel-2)}
+.fhdr .act{margin-left:0; border:1px solid var(--line); background:var(--panel-2);
+  border-radius:var(--r); padding:2px 8px; font-size:10.5px; color:var(--faint);
+  cursor:pointer; white-space:nowrap}
+.fhdr .act:hover{color:var(--g0); border-color:var(--g0)}
+.levels{display:flex; flex-wrap:wrap; gap:4px; margin-top:6px}
+.lv{display:flex; align-items:center; gap:6px; padding:3px 6px; border-radius:var(--r);
+  border:1px solid transparent; cursor:pointer; margin-top:3px}
+.lv:hover{background:var(--panel-2)}
+.lv.active{border-color:var(--g0); background:var(--panel-2)}
+.lv .sw{width:11px; height:11px; border-radius:3px; flex:none}
+.lv .nm{flex:1; min-width:0; font-size:11.5px; background:none; border:0;
+  padding:1px 3px; border-radius:2px; font-family:var(--mono)}
+.lv .nm:hover{background:var(--panel)}
+.lv .ct{font-family:var(--mono); font-size:10px; color:var(--dim)}
+.lv .read{font-family:var(--mono); font-size:9.5px; color:var(--g2);
+  white-space:nowrap; flex:none}
+.lv .read.bad{color:var(--bad)}
+.lv .rm{border:0;background:none;color:var(--faint);cursor:pointer;font-size:13px;
+  padding:0 2px; line-height:1}
+.lv .rm:hover{color:var(--bad)}
+.lev{padding:3px 8px; border-radius:10px; border:1px solid var(--line); cursor:pointer;
+  font-size:11px; font-family:var(--mono); background:var(--panel-2); user-select:none}
+.lev:hover{border-color:var(--faint)}
+.lev.on{color:#0B1017; font-weight:700}
+.lev .ct{opacity:.65; font-size:9.5px; margin-left:3px}
 .row{display:flex; align-items:center; gap:8px; margin-bottom:6px}
 .row label{font-size:11px; color:var(--dim)}
 select,input[type=text]{background:var(--panel-2); border:1px solid var(--line);
@@ -102,6 +139,9 @@ select,input[type=text]{background:var(--panel-2); border:1px solid var(--line);
   border-bottom:1px solid var(--line); font-size:9.5px; letter-spacing:.04em;
   text-transform:uppercase; white-space:nowrap; position:sticky; top:0; background:var(--panel)}
 .tbl th:first-child,.tbl td:first-child{text-align:left}
+/* units must not be uppercased: CSS turns µ into Greek capital Mu, so "µM"
+   renders as "MM" and the reader has no idea what scale they are looking at */
+.tbl th .u{text-transform:none}
 .tbl td{padding:4px 7px; border-bottom:1px solid #22303F; text-align:right;
   font-variant-numeric:tabular-nums; white-space:nowrap}
 .tbl tr:hover td{background:var(--panel-2)}
@@ -186,11 +226,92 @@ select,input[type=text]{background:var(--panel-2); border:1px solid var(--line);
         <div class="hint" style="margin-top:8px" id="paintHint"></div>
       </section>
       <section>
+        <div class="sec-h"><span>Design</span></div>
+        <select id="mode">
+          <option value="one">One factor — conditions compared pairwise</option>
+          <option value="two">Two factors — crossed, with interaction</option>
+          <option value="dose">Dose–response — IC50 per compound</option>
+        </select>
+      </section>
+
+      <section id="paneOne">
         <div class="sec-h"><span>Conditions</span>
           <button class="act" id="addGrp">+ add</button></div>
         <div id="groups"></div>
         <div class="row" style="margin-top:10px"><label for="autoCol">Auto-group by</label></div>
         <select id="autoCol"></select>
+        <div class="row" style="margin-top:12px"><label>Assay controls (for Z′)</label></div>
+        <select id="ctrlNeg"></select>
+        <div style="height:6px"></div>
+        <select id="ctrlPos"></select>
+      </section>
+
+      <section id="paneTwo" style="display:none">
+        <div class="sec-h"><span>Factors</span>
+          <span class="n">crossed</span>
+          <button class="act" id="clearF">clear</button>
+          <button class="act" id="swapF" style="margin-left:10px">swap A/B</button></div>
+        <div class="roles" id="roles"></div>
+        <div class="fhdr">
+          <span class="fkey" id="keyA">A</span>
+          <input class="fname" id="nameA" title="rename this factor">
+          <button class="act" data-addlev="A">+ level</button>
+        </div>
+        <select id="colA" title="build the levels from a metadata column"></select>
+        <div id="levA"></div>
+
+        <div class="fhdr" style="margin-top:14px">
+          <span class="fkey" id="keyB">B</span>
+          <input class="fname" id="nameB" title="rename this factor">
+          <button class="act" data-addlev="B">+ level</button>
+        </div>
+        <select id="colB" title="build the levels from a metadata column"></select>
+        <div id="levB"></div>
+        <div class="row" style="margin-top:12px"><label for="paint">Clicking a well sets</label></div>
+        <select id="paint">
+          <option value="AB">both factors</option>
+          <option value="A">factor A only</option>
+          <option value="B">factor B only</option>
+        </select>
+        <div class="row" style="margin-top:10px" id="ssRow"><label for="ssType">Sums of squares</label></div>
+        <select id="ssType">
+          <option value="2">Type II (default)</option>
+          <option value="3">Type III</option>
+        </select>
+        <div id="doseOpts" style="display:none">
+          <div class="row" style="margin-top:10px"><label for="split">Split cells by</label></div>
+          <select id="split"></select>
+          <div class="hint" id="splitHint" style="margin-top:6px"></div>
+          <div class="row" style="margin-top:10px"><label for="unit">Concentration unit</label></div>
+          <select id="unit">
+            <option value="nM">nM</option>
+            <option value="µM">µM</option>
+            <option value="mM">mM</option>
+            <option value="M">M</option>
+            <option value="µg/mL">µg/mL</option>
+            <option value="mg/mL">mg/mL</option>
+            <option value="ng/mL">ng/mL</option>
+            <option value="%">% (v/v)</option>
+            <option value="Gy">Gy</option>
+            <option value="">no unit</option>
+          </select>
+          <div class="row" style="margin-top:10px"><label for="norm">Normalise to</label></div>
+          <select id="norm">
+            <option value="raw">nothing — raw readout</option>
+            <option value="vehicle">vehicle (0 dose) = 100%</option>
+            <option value="inhib">% inhibition (vehicle = 0%, max effect = 100%)</option>
+          </select>
+          <div class="row" style="margin-top:10px"><label for="constrain">Constrain curve</label></div>
+          <select id="constrain">
+            <option value="free">free top and bottom</option>
+            <option value="bottom0">bottom = 0</option>
+            <option value="top100">top = 100</option>
+            <option value="both">top = 100, bottom = 0</option>
+          </select>
+          <div class="row" style="margin-top:10px"><label for="si">Selectivity vs</label></div>
+          <select id="si"></select>
+        </div>
+        <div class="hint" style="margin-top:8px" id="twoHint"></div>
       </section>
       <section>
         <div class="sec-h"><span>Readout</span></div>
@@ -214,7 +335,7 @@ select,input[type=text]{background:var(--panel-2); border:1px solid var(--line);
 
     <div class="work">
       <div id="warnings"></div>
-      <section class="card">
+      <section class="card" id="ovCard">
         <div class="sec-h"><span>Overview</span><span class="n" id="ovNote"></span></div>
         <div class="grid2">
           <div class="plot"><canvas id="cSuper"></canvas>
@@ -223,11 +344,37 @@ select,input[type=text]{background:var(--panel-2); border:1px solid var(--line);
             <div class="cap" id="effCap">difference from reference · bootstrap 95% CI</div></div>
         </div>
       </section>
-      <section class="card">
+      <section class="card" id="qcCard" style="display:none">
+        <div class="sec-h"><span>Assay quality</span><span class="n" id="qcTitle"></span></div>
+        <div id="qcOut"></div>
+      </section>
+
+      <section class="card" id="drCard" style="display:none">
+        <div class="sec-h"><span>Dose–response</span><span class="n" id="drTitle"></span></div>
+        <div class="plot" style="margin-bottom:14px"><canvas id="cDose"></canvas>
+          <div class="cap" id="drCap">points are well values · curve is a four-parameter logistic fit</div></div>
+        <div class="tblScroll"><table class="tbl" id="tDose"></table></div>
+        <div id="cmpOut"></div>
+        <div id="siOut"></div>
+        <div class="hint" style="margin-top:10px" id="drNote"></div>
+      </section>
+
+      <section class="card" id="twCard" style="display:none">
+        <div class="sec-h"><span>Two-way ANOVA</span><span class="n" id="twTitle"></span></div>
+        <div class="grid2" style="margin-bottom:14px">
+          <div class="plot"><canvas id="cInter"></canvas>
+            <div class="cap">cell means · parallel lines = no interaction</div></div>
+          <div id="twoway"></div>
+        </div>
+        <div id="twPost"></div>
+        <div class="hint" id="twNote" style="margin-top:12px"></div>
+      </section>
+
+      <section class="card" id="grpCard">
         <div class="sec-h"><span>Per condition</span><span class="n">n = wells, not cells</span></div>
         <div class="tblScroll"><table class="tbl" id="tGroup"></table></div>
       </section>
-      <section class="card">
+      <section class="card" id="cmpCard">
         <div class="sec-h"><span>Comparisons</span><span class="n" id="omni"></span></div>
         <div class="tblScroll"><table class="tbl" id="tPair"></table></div>
         <div class="hint" style="margin-top:10px" id="testNote"></div>
@@ -242,7 +389,6 @@ select,input[type=text]{background:var(--panel-2); border:1px solid var(--line);
 
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.inflate.min.js"></script>
 <script>
-"use strict";
 /* ============================================================
    Well-level statistics for condition comparison.
    The unit of replication is the WELL, never the cell.
@@ -535,6 +681,443 @@ const _unused_exports = {
   welch, studentT, mannWhitney, hedgesG,
   anova, welchAnova, kruskal, holm, bh, bootDiff, zPrime, ssmd };
 
+
+/* ============================================================
+   Two-way ANOVA for a crossed well design.
+
+   Sums of squares are obtained by comparing nested least-squares
+   fits rather than by textbook shortcut formulas, because those
+   shortcuts are only correct for balanced designs and plate
+   layouts are very often unbalanced (a failed well, an extra
+   replicate). Type II and Type III are both offered; they agree
+   with each other and with the classic formulas whenever the
+   design happens to be balanced.
+   ============================================================ */
+
+/** Least squares by normal equations with Gaussian elimination.
+ *  Returns the residual sum of squares and the rank actually used. */
+function ols(X, y){
+  const n = X.length, p = X[0].length;
+  const A = Array.from({length:p}, ()=> new Float64Array(p+1));
+  for(let i=0;i<p;i++){
+    for(let j=0;j<p;j++){ let s=0; for(let r=0;r<n;r++) s += X[r][i]*X[r][j]; A[i][j]=s; }
+    let s=0; for(let r=0;r<n;r++) s += X[r][i]*y[r]; A[i][p]=s;
+  }
+  const piv = [];
+  let rank = 0;
+  for(let c=0;c<p;c++){
+    let best=-1, bv=1e-9;
+    for(let r=rank;r<p;r++){ const v=Math.abs(A[r][c]); if(v>bv){bv=v;best=r;} }
+    if(best<0) continue;                       // column aliased - skip it
+    const tmp=A[rank]; A[rank]=A[best]; A[best]=tmp;
+    const d=A[rank][c];
+    for(let j=c;j<=p;j++) A[rank][j]/=d;
+    for(let r=0;r<p;r++){ if(r===rank) continue;
+      const f=A[r][c]; if(!f) continue;
+      for(let j=c;j<=p;j++) A[r][j]-=f*A[rank][j]; }
+    piv.push(c); rank++;
+  }
+  const beta = new Float64Array(p);
+  piv.forEach((c,i)=> beta[c]=A[i][p]);
+  let rss=0;
+  for(let r=0;r<n;r++){
+    let f=0; for(let j=0;j<p;j++) f += X[r][j]*beta[j];
+    const e=y[r]-f; rss += e*e;
+  }
+  return { rss, rank, beta };
+}
+
+/** Build a design matrix from a list of terms.
+ *  coding "dummy" = reference-cell (Type II), "effect" = sum-to-zero (Type III). */
+function design(rows, La, Lb, terms, coding){
+  const ia = new Map(La.map((v,i)=>[v,i])), ib = new Map(Lb.map((v,i)=>[v,i]));
+  const a = La.length, b = Lb.length;
+  const enc = (idx, L, code) => {                 // L-1 columns for a factor
+    const out = new Array(L-1).fill(0);
+    if(code === "effect"){
+      if(idx === L-1) out.fill(-1); else out[idx] = 1;
+    } else if(idx > 0) out[idx-1] = 1;
+    return out;
+  };
+  const X = rows.map(r => {
+    const A = enc(ia.get(r.a), a, coding), B = enc(ib.get(r.b), b, coding);
+    const row = [1];
+    if(terms.includes("A")) row.push(...A);
+    if(terms.includes("B")) row.push(...B);
+    if(terms.includes("AB")) for(const x of A) for(const y of B) row.push(x*y);
+    return row;
+  });
+  return X;
+}
+
+function fit(rows, La, Lb, terms, coding){
+  const X = design(rows, La, Lb, terms, coding);
+  const y = rows.map(r=>r.y);
+  return ols(X, y);
+}
+
+/**
+ * rows: [{a, b, y}]  ·  type: 2 | 3
+ * Returns the ANOVA table plus the cell/marginal means needed to plot it.
+ */
+function twoWayAnova(rows, type = 2){
+  const La = [...new Set(rows.map(r=>r.a))];
+  const Lb = [...new Set(rows.map(r=>r.b))];
+  const a = La.length, b = Lb.length, N = rows.length;
+  const out = { La, Lb, a, b, N, ok:false, reason:"" };
+  if(a < 2 || b < 2){ out.reason = "Two-way ANOVA needs at least two levels of each factor."; return out; }
+
+  // every combination must contain at least one well, or the interaction
+  // simply cannot be estimated
+  const cells = new Map();
+  for(const r of rows){ const k = r.a+"\u0000"+r.b;
+    if(!cells.has(k)) cells.set(k, []); cells.get(k).push(r.y); }
+  const empty = [];
+  for(const A of La) for(const B of Lb) if(!cells.has(A+"\u0000"+B)) empty.push([A,B]);
+  out.cells = cells; out.empty = empty;
+
+  const dfA = a-1, dfB = b-1, dfAB = (a-1)*(b-1);
+  const full = fit(rows, La, Lb, empty.length ? ["A","B"] : ["A","B","AB"],
+                   type === 3 ? "effect" : "dummy");
+  const dfRes = N - full.rank;
+  out.dfRes = dfRes;
+  if(dfRes < 1){
+    out.reason = "No residual degrees of freedom — every cell has a single well, "
+               + "so there is nothing left to estimate the noise from.";
+    return out;
+  }
+  const msRes = full.rss/dfRes;
+
+  const coding = type === 3 ? "effect" : "dummy";
+  let ssA, ssB, ssAB = NaN;
+  if(empty.length){
+    // main effects only
+    ssA = fit(rows, La, Lb, ["B"], coding).rss - full.rss;
+    ssB = fit(rows, La, Lb, ["A"], coding).rss - full.rss;
+  } else if(type === 3){
+    // drop each term from the full model, effect coding makes this meaningful
+    ssA  = fit(rows, La, Lb, ["B","AB"], "effect").rss - full.rss;
+    ssB  = fit(rows, La, Lb, ["A","AB"], "effect").rss - full.rss;
+    ssAB = fit(rows, La, Lb, ["A","B"],  "effect").rss - full.rss;
+  } else {
+    // Type II: each main effect adjusted for the other but not for the
+    // interaction; the interaction adjusted for both main effects
+    const both = fit(rows, La, Lb, ["A","B"], "dummy");
+    ssA  = fit(rows, La, Lb, ["B"], "dummy").rss - both.rss;
+    ssB  = fit(rows, La, Lb, ["A"], "dummy").rss - both.rss;
+    ssAB = both.rss - full.rss;
+  }
+  const mk = (ss, df) => {
+    const ms = ss/df, F = ms/msRes;
+    return { ss, df, ms, F, p: fSF(F, df, dfRes) };
+  };
+  out.A  = mk(ssA, dfA);
+  out.B  = mk(ssB, dfB);
+  if(!empty.length) out.AB = mk(ssAB, dfAB);
+  out.residual = { ss: full.rss, df: dfRes, ms: msRes };
+  out.type = type;
+  out.ok = true;
+
+  // cell and marginal means for the interaction plot
+  const m = arr => arr.reduce((x,y)=>x+y,0)/arr.length;
+  out.cellMean = new Map();
+  for(const [k,v] of cells) out.cellMean.set(k, { mean:m(v), n:v.length, vals:v });
+  out.meanA = new Map(La.map(A => [A, m(rows.filter(r=>r.a===A).map(r=>r.y))]));
+  out.meanB = new Map(Lb.map(B => [B, m(rows.filter(r=>r.b===B).map(r=>r.y))]));
+  out.grand = m(rows.map(r=>r.y));
+  out.balanced = [...cells.values()].every(v => v.length === cells.values().next().value.length);
+  return out;
+}
+
+
+/* ============================================================
+   Four-parameter logistic (Hill) fit for dose-response curves.
+
+   Y = Bottom + (Top - Bottom) / (1 + 10^((X - logIC50) * H))
+   with X = log10(concentration).
+
+   With H > 0 the curve falls from Top at low dose to Bottom at
+   high dose, which is the usual inhibition case, and logIC50 is
+   the RELATIVE IC50 - the dose halfway between the fitted Top and
+   Bottom, not halfway to zero. Those differ whenever the curve
+   doesn't reach zero, and the relative one is what almost every
+   paper reports.
+   ============================================================ */
+
+function hill4(x, p){                      // p = [top, bottom, logIC50, h]
+  const [top, bot, lic, h] = p;
+  return bot + (top - bot)/(1 + Math.pow(10, (x - lic)*h));
+}
+
+/** Levenberg–Marquardt with a numerical Jacobian.
+ *  `fixed` holds parameters at their starting value (e.g. Bottom = 0). */
+function lm(xs, ys, p0, fixed = [false,false,false,false], maxIter = 400){
+  let p = p0.slice();
+  const n = xs.length, m = p.length;
+  const free = [];
+  for(let i=0;i<m;i++) if(!fixed[i]) free.push(i);
+  const resid = pp => xs.map((x,i)=> ys[i] - hill4(x, pp));
+  const sse = pp => resid(pp).reduce((s,r)=>s+r*r, 0);
+  let lambda = 1e-3, cur = sse(p);
+
+  for(let it=0; it<maxIter; it++){
+    // numerical Jacobian, central differences on the free parameters
+    const J = Array.from({length:n}, ()=> new Float64Array(free.length));
+    free.forEach((pi,k)=>{
+      const step = Math.max(1e-7, Math.abs(p[pi])*1e-6);
+      const a = p.slice(), b = p.slice();
+      a[pi] += step; b[pi] -= step;
+      for(let i=0;i<n;i++) J[i][k] = (hill4(xs[i],a) - hill4(xs[i],b))/(2*step);
+    });
+    const r = resid(p);
+    const A = Array.from({length:free.length}, ()=> new Float64Array(free.length+1));
+    for(let a=0;a<free.length;a++){
+      for(let b=0;b<free.length;b++){ let s=0; for(let i=0;i<n;i++) s += J[i][a]*J[i][b];
+        A[a][b] = s; }
+      let s=0; for(let i=0;i<n;i++) s += J[i][a]*r[i];
+      A[a][free.length] = s;
+    }
+    let improved = false;
+    for(let tries=0; tries<30 && !improved; tries++){
+      const M = A.map(row => Float64Array.from(row));
+      for(let i=0;i<free.length;i++) M[i][i] *= (1 + lambda);
+      const d = solve(M, free.length);
+      if(!d){ lambda *= 10; continue; }
+      const q = p.slice();
+      free.forEach((pi,k)=> q[pi] += d[k]);
+      const s2 = sse(q);
+      if(isFinite(s2) && s2 < cur){
+        const gain = cur - s2; p = q; cur = s2; lambda = Math.max(lambda/10, 1e-12);
+        improved = true;
+        if(gain < 1e-14*Math.max(1,cur)) it = maxIter;
+      } else lambda *= 10;
+      if(lambda > 1e12) { it = maxIter; break; }
+    }
+    if(!improved) break;
+  }
+  return { p, sse: cur, free };
+}
+function solve(M, n){                       // Gauss–Jordan, returns null if singular
+  for(let c=0;c<n;c++){
+    let best=c, bv=Math.abs(M[c][c]);
+    for(let r=c+1;r<n;r++){ const v=Math.abs(M[r][c]); if(v>bv){bv=v;best=r;} }
+    if(bv < 1e-14) return null;
+    const t=M[c]; M[c]=M[best]; M[best]=t;
+    const d=M[c][c];
+    for(let j=c;j<=n;j++) M[c][j]/=d;
+    for(let r=0;r<n;r++){ if(r===c) continue;
+      const f=M[r][c]; if(!f) continue;
+      for(let j=c;j<=n;j++) M[r][j]-=f*M[c][j]; }
+  }
+  return Array.from({length:n},(_,i)=>M[i][n]);
+}
+
+/** Covariance = MSE · (JᵀJ)⁻¹ , used for the standard errors. */
+function covariance(xs, ys, p, free){
+  const n = xs.length, k = free.length, df = n - k;
+  if(df < 1) return null;
+  const J = Array.from({length:n}, ()=> new Float64Array(k));
+  free.forEach((pi,c)=>{
+    const step = Math.max(1e-7, Math.abs(p[pi])*1e-6);
+    const a=p.slice(), b=p.slice(); a[pi]+=step; b[pi]-=step;
+    for(let i=0;i<n;i++) J[i][c] = (hill4(xs[i],a)-hill4(xs[i],b))/(2*step);
+  });
+  let sse = 0; for(let i=0;i<n;i++){ const r = ys[i]-hill4(xs[i],p); sse += r*r; }
+  const mse = sse/df;
+  const A = Array.from({length:k}, (_,a)=> Float64Array.from(
+    Array.from({length:k},(_,b)=>{ let s=0; for(let i=0;i<n;i++) s+=J[i][a]*J[i][b]; return s; })));
+  // invert by solving against the identity, column by column
+  const inv = Array.from({length:k}, ()=> new Float64Array(k));
+  for(let c=0;c<k;c++){
+    const M = A.map((row,r)=> Float64Array.from([...row, r===c?1:0]));
+    const s = solve(M, k);
+    if(!s) return null;
+    for(let r=0;r<k;r++) inv[r][c] = s[r];
+  }
+  return { cov: inv.map(r=>Array.from(r, v=>v*mse)), mse, df };
+}
+
+/**
+ * points: [{conc, y}] with conc > 0 (vehicle is handled by the caller)
+ * opts: { fixTop, fixBottom } — numbers to hold, or null/undefined to fit
+ */
+function fitDoseResponse(points, opts = {}){
+  const pts = points.filter(p => isFinite(p.conc) && p.conc > 0 && isFinite(p.y));
+  const out = { n: pts.length, ok:false, reason:"" };
+  if(pts.length < 4){ out.reason = "Needs at least four points above zero concentration."; return out; }
+  const xs = pts.map(p => Math.log10(p.conc)), ys = pts.map(p => p.y);
+  const conc = [...new Set(pts.map(p=>p.conc))].sort((a,b)=>a-b);
+  out.nDoses = conc.length;
+  if(conc.length < 4){ out.reason = `Only ${conc.length} distinct concentrations — a four-parameter curve needs at least four.`; return out; }
+
+  // starting values from the data: plateau at each end, midpoint crossing
+  const byConc = new Map();
+  for(const p of pts){ if(!byConc.has(p.conc)) byConc.set(p.conc, []); byConc.get(p.conc).push(p.y); }
+  const mAt = c => { const v = byConc.get(c); return v.reduce((a,b)=>a+b,0)/v.length; };
+  const loMean = (mAt(conc[0]) + mAt(conc[1]))/2;
+  const hiMean = (mAt(conc[conc.length-1]) + mAt(conc[conc.length-2]))/2;
+  let top = opts.fixTop ?? loMean, bot = opts.fixBottom ?? hiMean;
+  const mid = (top + bot)/2;
+  let lic = (Math.log10(conc[0]) + Math.log10(conc[conc.length-1]))/2;
+  for(let i=0;i<conc.length-1;i++){
+    const a = mAt(conc[i]), b = mAt(conc[i+1]);
+    if((a-mid)*(b-mid) <= 0 && a !== b){
+      const f = (a-mid)/(a-b);
+      lic = Math.log10(conc[i]) + f*(Math.log10(conc[i+1])-Math.log10(conc[i]));
+      break;
+    }
+  }
+  const decreasing = hiMean < loMean;
+  const p0 = [top, bot, lic, decreasing ? 1 : -1];
+  const fixed = [opts.fixTop != null, opts.fixBottom != null, false, false];
+
+  const r = lm(xs, ys, p0, fixed);
+  const [T,B,L,H] = r.p;
+  if(!isFinite(L) || !isFinite(H) || H === 0){ out.reason = "The curve did not converge."; return out; }
+
+  const ssTot = (()=>{ const m = ys.reduce((a,b)=>a+b,0)/ys.length;
+    return ys.reduce((s,y)=>s+(y-m)*(y-m),0); })();
+  out.r2 = ssTot > 0 ? 1 - r.sse/ssTot : NaN;
+  out.top = T; out.bottom = B; out.hill = H;
+  out.logIC50 = L; out.ic50 = Math.pow(10, L);
+  // The curve is unchanged if Top/Bottom swap and H flips sign, so the
+  // direction has to be read from the fitted asymptotes, not from H alone.
+  const atLow  = H > 0 ? T : B;
+  const atHigh = H > 0 ? B : T;
+  out.atLow = atLow; out.atHigh = atHigh;
+  out.decreasing = atHigh < atLow;
+  out.direction = out.decreasing ? "IC50" : "EC50";
+  out.sse = r.sse;
+
+  const cv = covariance(xs, ys, r.p, r.free);
+  if(cv){
+    const li = r.free.indexOf(2);
+    if(li >= 0 && cv.cov[li][li] > 0){
+      const se = Math.sqrt(cv.cov[li][li]);
+      const tc = tCrit(0.05, cv.df);
+      out.logSE = se; out.df = cv.df;
+      // symmetric on the log scale, therefore asymmetric in concentration —
+      // which is the honest shape for a potency estimate
+      out.ic50Lo = Math.pow(10, L - tc*se);
+      out.ic50Hi = Math.pow(10, L + tc*se);
+    }
+    const hi = r.free.indexOf(3);
+    if(hi >= 0 && cv.cov[hi][hi] > 0) out.hillSE = Math.sqrt(cv.cov[hi][hi]);
+  }
+  // is the IC50 actually inside the tested range, or extrapolated?
+  out.concMin = conc[0]; out.concMax = conc[conc.length-1];
+  out.extrapolated = out.ic50 < conc[0] || out.ic50 > conc[conc.length-1];
+  out.span = Math.abs(T - B);
+  out.ok = true;
+  return out;
+}
+
+
+/* ============================================================
+   Comparing two dose-response curves.
+
+   The question "is compound A more potent than B?" is not answered
+   by looking at whether the two confidence intervals overlap —
+   that test is conservative and has no stated error rate. The
+   standard answer is an extra sum-of-squares F test: fit the two
+   curves separately, then refit with a single shared logIC50, and
+   ask whether the forced sharing costs a significant amount of fit.
+   ============================================================ */
+
+/** Generic Levenberg–Marquardt over an arbitrary residual function. */
+function lmGeneric(resid, p0, maxIter = 500){
+  let p = p0.slice();
+  const m = p.length;
+  const sse = q => { const r = resid(q); return r.reduce((s,v)=>s+v*v, 0); };
+  let lambda = 1e-3, cur = sse(p);
+  if(!isFinite(cur)) return { p, sse:Infinity };
+
+  for(let it=0; it<maxIter; it++){
+    const r0 = resid(p), n = r0.length;
+    const J = Array.from({length:n}, ()=> new Float64Array(m));
+    for(let k=0;k<m;k++){
+      const step = Math.max(1e-7, Math.abs(p[k])*1e-6);
+      const a = p.slice(), b = p.slice();
+      a[k] += step; b[k] -= step;
+      const ra = resid(a), rb = resid(b);
+      // resid = y - model, so d(resid)/dp = -d(model)/dp
+      for(let i=0;i<n;i++) J[i][k] = -(ra[i]-rb[i])/(2*step);      // = d(model)/dp
+    }
+    const A = Array.from({length:m}, ()=> new Float64Array(m+1));
+    for(let a=0;a<m;a++){
+      for(let b=0;b<m;b++){ let s=0; for(let i=0;i<n;i++) s += J[i][a]*J[i][b]; A[a][b]=s; }
+      // Gauss-Newton normal equations for min sum(r^2): (JᵀJ)d = Jᵀr
+      let s=0; for(let i=0;i<n;i++) s += J[i][a]*r0[i];
+      A[a][m] = s;
+    }
+    let improved = false;
+    for(let tries=0; tries<30 && !improved; tries++){
+      const M = A.map(row=>Float64Array.from(row));
+      for(let i=0;i<m;i++) M[i][i] *= (1+lambda);
+      const d = solve(M, m);
+      if(!d){ lambda *= 10; continue; }
+      const q = p.map((v,i)=> v + d[i]);
+      const s2 = sse(q);
+      if(isFinite(s2) && s2 < cur){
+        const gain = cur - s2; p = q; cur = s2;
+        lambda = Math.max(lambda/10, 1e-12); improved = true;
+        if(gain < 1e-14*Math.max(1,cur)) it = maxIter;
+      } else lambda *= 10;
+      if(lambda > 1e12){ it = maxIter; break; }
+    }
+    if(!improved) break;
+  }
+  return { p, sse: cur };
+}
+
+/**
+ * Extra sum-of-squares F test for a shared logIC50.
+ * fitA / fitB are the results of fitDoseResponse on each compound.
+ */
+function compareCurves(ptsA, ptsB, fitA, fitB){
+  const out = { ok:false, reason:"" };
+  if(!fitA || !fitB || !fitA.ok || !fitB.ok){
+    out.reason = "Both compounds need a curve that fitted."; return out; }
+  const A = ptsA.filter(p=>p.conc>0 && isFinite(p.y));
+  const B = ptsB.filter(p=>p.conc>0 && isFinite(p.y));
+  const N = A.length + B.length;
+  const dfSep = N - 8;                       // four parameters per curve
+  if(dfSep < 1){ out.reason = "Not enough points to fit both curves separately."; return out; }
+
+  const ssSep = fitA.sse + fitB.sse;
+  const xA = A.map(p=>Math.log10(p.conc)), yA = A.map(p=>p.y);
+  const xB = B.map(p=>Math.log10(p.conc)), yB = B.map(p=>p.y);
+
+  // shared model: 7 parameters, one logIC50 for both curves
+  const resid = p => {
+    const rA = xA.map((x,i)=> yA[i] - hill4(x, [p[0],p[1],p[6],p[2]]));
+    const rB = xB.map((x,i)=> yB[i] - hill4(x, [p[3],p[4],p[6],p[5]]));
+    return rA.concat(rB);
+  };
+  const p0 = [fitA.top, fitA.bottom, fitA.hill, fitB.top, fitB.bottom, fitB.hill,
+              (fitA.logIC50 + fitB.logIC50)/2];
+  const shared = lmGeneric(resid, p0);
+  const dfShared = N - 7;
+  const ssShared = shared.sse;
+  if(!isFinite(ssShared) || ssShared < ssSep - 1e-9){
+    out.reason = "The constrained fit did not converge."; return out; }
+
+  const dfNum = dfShared - dfSep;            // = 1
+  const F = ((ssShared - ssSep)/dfNum) / (ssSep/dfSep);
+  out.ok = true;
+  out.F = F; out.df1 = dfNum; out.df2 = dfSep;
+  out.p = fSF(F, dfNum, dfSep);
+  out.ssSep = ssSep; out.ssShared = ssShared;
+  out.ratio = fitB.ic50 / fitA.ic50;         // fold difference in potency
+  out.sharedIC50 = Math.pow(10, shared.p[6]);
+  return out;
+}
+
+
+
+
+
+
 /* ============================================================
    Condition Explorer — group replicate wells, then compare them.
 
@@ -551,7 +1134,15 @@ const S = {
   name:"", rows:0, cols:{}, header:[], kind:"well",
   wells:[], wellRows:new Map(), plates:[], plate:null,
   groups:[], assign:new Map(), active:0,
+  mode:"one",                                   // "one" | "two"
+  fA:{ name:"Factor A", levels:[] }, fB:{ name:"Factor B", levels:[] },
+  asgA:new Map(), asgB:new Map(), actA:0, actB:0, paint:"AB",
+  ssType:2, tw:null,
+  norm:"raw", constrain:"free", si:"", dr:null, unit:"µM", split:"",
+  ctrlNeg:"", ctrlPos:"", cmpAll:null,
   metrics:[], metric:null, ref:0,
+  hiddenMarkers:[],        // markers switched off upstream (workbench only)
+  excludeCol:"",           // 0/1 column marking cells to drop entirely
   test:"welch", corr:"holm",
   result:null,
 };
@@ -616,15 +1207,7 @@ function detect(){
   S.plates = pl ? [...new Set(Array.from(pl).map(String))] : ["(all)"];
   S.plate = S.plates[0];
 
-  // one row per well, or aggregate the cells into wells
-  S.wellRows = new Map();
-  for(let i=0;i<S.rows;i++){
-    if(pl && String(pl[i]) !== S.plate) continue;
-    const w = String(S.cols["well"][i]);
-    let a = S.wellRows.get(w); if(!a){ a = []; S.wellRows.set(w, a); }
-    a.push(i);
-  }
-  S.wells = [...S.wellRows.keys()].sort(cmpWell);
+  buildWellRows();
   if(!S.wells.length) throw new Error("No wells found.");
 
   buildMetrics();
@@ -641,6 +1224,25 @@ function detect(){
             || S.metrics[0];
   S.metric = pref.key;
 }
+/** Map wells to their row indices, dropping cells flagged for exclusion.
+ *  Dropping them here rather than downstream is what keeps every percentage
+ *  coherent: a cell removed by an upstream filter must leave the denominator
+ *  as well as the numerator, or the classes stop summing to 100%. */
+function buildWellRows(){
+  const pl = S.cols["plate"];
+  const ex = S.excludeCol && S.cols[S.excludeCol] ? S.cols[S.excludeCol] : null;
+  S.wellRows = new Map();
+  S.nExcluded = 0;
+  for(let i=0;i<S.rows;i++){
+    if(pl && String(pl[i]) !== S.plate) continue;
+    if(ex && ex[i]) { S.nExcluded++; continue; }
+    const w = String(S.cols["well"][i]);
+    let a = S.wellRows.get(w); if(!a){ a = []; S.wellRows.set(w, a); }
+    a.push(i);
+  }
+  S.wells = [...S.wellRows.keys()].sort(cmpWell);
+}
+
 function cmpWell(a,b){
   const ra = /^([A-Z]+)(\d+)$/i.exec(a), rb = /^([A-Z]+)(\d+)$/i.exec(b);
   if(ra && rb) return ra[1] === rb[1] ? (+ra[2])-(+rb[2]) : ra[1].localeCompare(rb[1]);
@@ -655,40 +1257,84 @@ function wellRC(k){
 
 /** Readouts we can compare. For a per-well file that's the pct_/n_ columns;
  *  for a per-nucleus file we derive them from the stored positivity calls. */
+/** How many markers are actually in play. A class like "triple" cannot exist
+ *  with two markers, so this is the hard ceiling on the population classes we
+ *  offer — regardless of what strings happen to be sitting in the column. It
+ *  is belt and braces against a stale `population` column from any source. */
+function activeMarkerCount(){
+  const hidden = S.hiddenMarkers || [];
+  const n = S.header.filter(c => /^pos_/.test(c) &&
+    !hidden.some(m => c === `pos_${m}`)).length;
+  return n || Infinity;          // no pos_ columns at all: don't restrict
+}
+const POP_ORDER = ["negative","single","double","triple","quadruple","quintuple"];
+/** Is this class/combination reachable with the markers currently active? */
+function classAllowed(v){
+  const cap = activeMarkerCount();
+  if(cap === Infinity) return true;
+  const i = POP_ORDER.indexOf(v);
+  if(i >= 0) return i <= cap;
+  const plus = (String(v).match(/\+/g) || []).length;   // "GFP+RFP+" -> 2
+  return plus <= cap;
+}
+
 function buildMetrics(){
   const h = S.header, out = [];
+  // A marker switched off in the gating tab is not part of the analysis, so
+  // its intensity and foci readouts should not be on offer here either.
+  const hidden = S.hiddenMarkers || [];
+  const isHidden = c => hidden.some(m =>
+    c === `mean_${m}` || c === `median_${m}` || c === `integrated_${m}` ||
+    c === `pos_${m}` || c === `foci_n_${m}` || c === `foci_pos_${m}`);
   const skip = /^(well_row|well_col|field|image_id|label|y|x|bg_)/;
   if(S.kind === "well"){
     for(const c of h){
-      if(skip.test(c) || c === "well" || c === "plate") continue;
-      if(!(S.cols[c] instanceof Float64Array)) continue;
+      if(skip.test(c) || c === "well" || c === "plate" || isHidden(c)) continue;
+      // any typed array counts — the column may have been parsed elsewhere
+      if(!ArrayBuffer.isView(S.cols[c])) continue;
       if(c.startsWith("kv_")) continue;              // metadata, not a readout
       out.push({ key:c, label:c.replace(/_/g," "), agg:"first" });
     }
   } else {
     out.push({ key:"__n", label:"cells per well", agg:"count" });
-    for(const c of h) if(/^pos_/.test(c))
+    out.push({ key:"__frac", label:"% of well in this population", agg:"fracOfWell" });
+    for(const c of h) if(/^pos_/.test(c) && !isHidden(c))
       out.push({ key:c, label:"% "+c.slice(4)+" positive", agg:"pctTrue" });
     if(h.includes("population"))
-      for(const p of ["negative","single","double","triple","quadruple"])
-        if(new Set(S.cols["population"]).has(p))
+      for(const p of POP_ORDER)
+        if(classAllowed(p) && new Set(S.cols["population"]).has(p))
           out.push({ key:"__pop_"+p, label:"% "+p, agg:"pctPop" });
-    for(const c of h) if(/^(mean|median|integrated)_/.test(c))
-      out.push({ key:c, label:"mean "+c.replace(/_/g," ")+" per well", agg:"mean" });
-    for(const c of h) if(/^foci_n_/.test(c))
-      out.push({ key:c, label:"mean "+c.slice(7)+" foci per nucleus", agg:"mean" });
+    for(const c of h) if(/^(mean|median|integrated)_/.test(c) && !isHidden(c)){
+      const [stat, ...rest] = c.split("_");
+      out.push({ key:c, label:`${rest.join("_")} ${stat} intensity, per well`, agg:"mean" });
+    }
+    for(const c of h) if(/^foci_n_/.test(c) && !isHidden(c))
+      out.push({ key:c, label:c.slice(7)+" foci per nucleus, per well", agg:"mean" });
   }
   S.metrics = out;
 }
 
 /** The value of the current readout for one well. */
-function wellValue(w){
-  const rows = S.wellRows.get(w);
+/**
+ * @param w    well label
+ * @param sub  optional subpopulation value; only cells whose split column
+ *             equals it are used. Needs per-cell data.
+ */
+function wellValue(w, sub){
+  let rows = S.wellRows.get(w);
   if(!rows || !rows.length) return NaN;
+  const all = rows;
+  if(sub !== undefined && S.split){
+    const v = S.cols[S.split];
+    rows = rows.filter(i => splitValue(v[i]) === sub);
+  }
+  if(!rows.length) return NaN;
   const m = S.metrics.find(x => x.key === S.metric);
   if(!m) return NaN;
   if(m.agg === "first") return S.cols[m.key][rows[0]];
   if(m.agg === "count") return rows.length;
+  // fraction of the WHOLE well that this subpopulation makes up
+  if(m.agg === "fracOfWell") return 100*rows.length/all.length;
   if(m.agg === "pctTrue"){
     const v = S.cols[m.key]; let k = 0;
     for(const i of rows) if(v[i] > 0.5) k++;
@@ -744,6 +1390,330 @@ function autoGroup(col){
   S.ref = guessControl(keys);
 }
 
+/** Build both factors from two metadata columns — the usual case, since a
+ *  factorial plate layout is normally recorded that way already. */
+function autoGroup2(colA, colB){
+  if(!colA || !colB || !S.cols[colA] || !S.cols[colB]) return;
+  const valOf = (c,w) => String(S.cols[c][S.wellRows.get(w)[0]]).trim();
+  const LA = [...new Set(S.wells.map(w => valOf(colA,w)))].filter(v=>v && v!=="NaN").sort(naturalCmp);
+  const LB = [...new Set(S.wells.map(w => valOf(colB,w)))].filter(v=>v && v!=="NaN").sort(naturalCmp);
+  S.fA = { name: colA.replace(/^kv_/,""), levels: LA };
+  // The unit lives in its own control, so strip it from the factor name -
+  // otherwise the axis reads "Dose_uM (nM)" as soon as anyone overrides it.
+  S.fB = { name: stripUnit(colB.replace(/^kv_/,"")), levels: LB };
+  S.asgA = new Map(); S.asgB = new Map();
+  for(const w of S.wells){
+    const a = LA.indexOf(valOf(colA,w)), b = LB.indexOf(valOf(colB,w));
+    if(a >= 0) S.asgA.set(w, a);
+    if(b >= 0) S.asgB.set(w, b);
+  }
+  S.actA = 0; S.actB = 0;
+}
+/** Wells that carry a level on BOTH factors are the ones the model can use. */
+function twoWayRows(){
+  const out = [];
+  for(const w of S.wells){
+    const a = S.asgA.get(w), b = S.asgB.get(w);
+    if(a === undefined || b === undefined) continue;
+    const y = wellValue(w);
+    if(isFinite(y)) out.push({ a:S.fA.levels[a], b:S.fB.levels[b], y, well:w });
+  }
+  return out;
+}
+
+/* ---------- editing the two factors by hand -----------------
+   Two-factor mode was previously usable only when the plate
+   carried metadata to build the levels from. These give it the
+   same add / rename / delete controls as the one-factor list, so
+   a factorial layout can be set up from nothing.
+   ---------------------------------------------------------- */
+const FKEY = { A:["fA","asgA","actA"], B:["fB","asgB","actB"] };
+/** Dose-response uses the same two crossed factors as two-way mode — compound
+ *  and concentration — so the plate must behave identically in both. */
+const twoFactor = () => S.mode === "two" || S.mode === "dose";
+function addLevel(key){
+  const [f,, act] = FKEY[key];
+  if(S[f].levels.length >= 12) return;
+  S[f].levels.push(nextLevelName(S[f].levels, key));
+  S[act] = S[f].levels.length - 1;
+}
+function nextLevelName(levels, key){
+  // Only a placeholder the user can retype, so predictable beats clever:
+  // continue an exact arithmetic or exact geometric series, otherwise take a
+  // log step for dose-like series and +1 for everything else.
+  const nums = levels.map(v => parseFloat(v));
+  if(nums.length && nums.every(isFinite)){
+    const last = nums[nums.length-1];
+    if(nums.length >= 2){
+      const d0 = nums[1]-nums[0];
+      let arith = d0 !== 0;
+      for(let i=2;i<nums.length && arith;i++)
+        if(Math.abs((nums[i]-nums[i-1]) - d0) > 1e-9*Math.max(1,Math.abs(d0))) arith = false;
+      if(arith) return trimNum(last + d0);
+
+      if(nums.every(v => v > 0)){
+        const r0 = nums[1]/nums[0];
+        let geo = r0 > 0 && Math.abs(r0-1) > 1e-9;
+        for(let i=2;i<nums.length && geo;i++)
+          if(Math.abs(nums[i]/nums[i-1] - r0) > 1e-6*r0) geo = false;
+        if(geo) return trimNum(last * r0);
+      }
+    }
+    const pos = nums.filter(v => v > 0);
+    const wide = pos.length >= 2 && Math.max(...pos)/Math.min(...pos) >= 10;
+    if(last === 0) return "1";
+    return trimNum(wide ? last*10 : last + 1);
+  }
+  let n = levels.length + 1;
+  while(levels.includes(`${key}${n}`)) n++;
+  return `${key}${n}`;
+}
+const trimNum = v => {
+  const s = Number(v.toPrecision(6)).toString();
+  return s.length ? s : String(v);
+};
+function renameLevel(key, i, name){
+  const [f] = FKEY[key];
+  const v = String(name).trim();
+  if(!v){ errToast("A level needs a name."); return false; }
+  const clash = S[f].levels.findIndex((L,j) => j !== i && L === v);
+  if(clash >= 0){
+    // Silently reverting the box is what made this look like "it doesn't
+    // recognise what I typed" — say what happened instead.
+    errToast(`“${escapeHtml(v)}” is already a level of ${escapeHtml(S[f].name)}. `+
+             `Give it a different name, or delete the duplicate first.`);
+    return false;
+  }
+  S[f].levels[i] = v;
+  return true;
+}
+function removeLevel(key, i){
+  const [f, asg, act] = FKEY[key];
+  S[f].levels.splice(i, 1);
+  const next = new Map();
+  for(const [w,g] of S[asg]){ if(g === i) continue; next.set(w, g > i ? g-1 : g); }
+  S[asg] = next;
+  S[act] = Math.max(0, Math.min(S[act], S[f].levels.length - 1));
+}
+function clearFactor(key){
+  const [, asg] = FKEY[key];
+  S[asg] = new Map();
+}
+
+/** Guess the concentration unit from the column name, so the axis is right
+ *  without anyone having to set it. kv_Dose_uM -> µM, conc_nM -> nM, etc. */
+function guessUnit(colName){
+  const s = String(colName || "").toLowerCase();
+  if(/(^|[_\s\-])n\s*m($|[_\s\-\)])|_nm\b|nmol/.test(s)) return "nM";
+  if(/[uµ]\s*m($|[_\s\-\)])|_um\b|umol|µmol/.test(s)) return "µM";
+  if(/(^|[_\s\-])m\s*m($|[_\s\-\)])|_mm\b|mmol/.test(s)) return "mM";
+  if(/[uµ]g[_\s\-/]*m?l/.test(s)) return "µg/mL";
+  if(/mg[_\s\-/]*m?l/.test(s)) return "mg/mL";
+  if(/ng[_\s\-/]*m?l/.test(s)) return "ng/mL";
+  if(/(^|[_\s\-])gy($|[_\s\-])|gray/.test(s)) return "Gy";
+  if(/percent|_pct|\bpct\b/.test(s)) return "%";
+  if(/molar|(^|[_\s\-])m($|[_\s\-])/.test(s)) return "M";
+  return "µM";
+}
+const unitSuffix = () => S.unit ? ` ${S.unit}` : "";
+/** Unit for a table header — kept out of the CSS uppercase transform. */
+const unitTh = () => S.unit ? ` <span class="u">(${escapeHtml(S.unit)})</span>` : "";
+/** Remove a trailing unit token: Dose_uM -> Dose, conc_ng_mL -> conc. */
+function stripUnit(name){
+  const s = String(name)
+    .replace(/[_\s\-]*\(?\s*(nM|uM|µM|mM|M|nmol|umol|µmol|mmol|ng|ug|µg|mg|g)\s*[\/_]?\s*(mL|ml|L|l)?\s*\)?$/i, "")
+    .replace(/[_\s\-]*\(?\s*(Gy|gray|percent|pct|%)\s*\)?$/i, "")
+    .replace(/[_\s\-]+$/, "");
+  return s || String(name);
+}
+const concLabel  = () => S.unit ? `${S.fB.name} (${S.unit})` : S.fB.name;
+
+/** How well does each factor fit its role? Drives the banner and the warning. */
+function doseRoles(){
+  const numeric = L => L.length > 0 && L.every(v => isFinite(concOf(v)));
+  const a = { n:S.fA.levels.length, numeric:numeric(S.fA.levels) };
+  const b = { n:S.fB.levels.length, numeric:numeric(S.fB.levels) };
+  return { a, b, swapped: !b.numeric && a.numeric };
+}
+function drawRoles(){
+  const box = document.getElementById("roles");
+  if(!box) return;
+  if(S.mode !== "dose"){
+    box.innerHTML = `<b>Factor A</b> and <b>Factor B</b> are crossed: every well
+      gets one level of each, and the model tests both main effects and their
+      interaction.`;
+    return;
+  }
+  const r = doseRoles();
+  const bad = S.fB.levels.filter(L => !isFinite(concOf(L)));
+  let html = `<b>Factor A = the compound</b> (or condition) — one curve is fitted
+    per level.<br><b>Factor B = the concentration</b> — must be numeric, and is
+    plotted on a log axis.`;
+  if(bad.length) html += `<br><span class="bad">Factor B has non-numeric levels
+    (<code>${bad.slice(0,3).map(escapeHtml).join(", ")}${bad.length>3?", …":""}</code>).</span>
+    ${r.swapped ? `It looks like the two are the wrong way round — press
+    <b>swap A/B</b>.` : `Concentration levels need a number in them, like
+    <code>10</code> or <code>10 uM</code>.`}`;
+  else {
+    const cs = S.fB.levels.map(concOf).filter(isFinite).sort((x,y)=>x-y);
+    if(cs.length) html += `<br>Read as: <code>${cs.map(trimNum).join(", ")}</code>${
+      S.unit?" "+escapeHtml(S.unit):""}.`;
+    if(S.fB.levels.length && S.fB.levels.length < 4)
+      html += `<br><span class="bad">Only ${S.fB.levels.length} concentrations.</span>
+        A four-parameter curve needs at least four, and six to eight is the usual minimum.`;
+    const dup = cs.filter((v,i)=> i && v === cs[i-1]);
+    if(dup.length) html += `<br><span class="bad">Two levels read as the same
+      concentration (${dup.map(trimNum).join(", ")}).</span> They will be treated as
+      one dose by the fit.`;
+  }
+  box.innerHTML = html;
+}
+
+/* ---------- subpopulations within a well -------------------
+   Splitting a well into cell populations (marker-positive vs
+   negative, say) and fitting a curve to each answers a question
+   the well average cannot: do the two populations respond to the
+   compound differently? It needs per-cell data — a per-well
+   summary has already averaged the populations together.
+   ---------------------------------------------------------- */
+function splitValue(v){
+  if(typeof v === "number") return v > 0.5 ? "positive" : "negative";
+  return String(v);
+}
+/** Columns we can split cells on: the positivity calls and class labels. */
+function splitCandidates(){
+  if(S.kind !== "cell") return [];
+  const out = [];
+  const hidden = S.hiddenMarkers || [];
+  for(const c of S.header){
+    if(hidden.some(m => c === `pos_${m}` || c === `foci_pos_${m}`)) continue;
+    if(/^pos_/.test(c)) out.push([c, c.slice(4)+" positive vs negative"]);
+    else if(/^foci_pos_/.test(c)) out.push([c, c.slice(9)+" foci-positive vs negative"]);
+    else if(c === "dead") out.push([c, "dead vs live"]);
+    else if(c === "population" || c === "combination"){
+      // Name the classes rather than counting them: "population (4 classes)"
+      // gives no clue that double-positive cells are one of the options.
+      const seen = new Set();
+      for(const w of S.wells)
+        for(const i of S.wellRows.get(w)){
+          const v = String(S.cols[c][i]);
+          if(v && v !== "undefined" && classAllowed(v)) seen.add(v);
+          if(seen.size > 9) break;
+        }
+      const classes = [...seen];
+      if(classes.length < 2 || classes.length > 8) continue;
+      const order = ["negative","single","double","triple","quadruple","quintuple"];
+      classes.sort((a,b)=>{
+        const ia = order.indexOf(a), ib = order.indexOf(b);
+        if(ia >= 0 && ib >= 0) return ia-ib;
+        if(ia >= 0) return -1;
+        if(ib >= 0) return 1;
+        const ca = (a.match(/\+/g)||[]).length, cb = (b.match(/\+/g)||[]).length;
+        return ca === cb ? naturalCmp(a,b) : ca-cb;
+      });
+      const shown = classes.slice(0,4).join(" / ") + (classes.length>4 ? " / …" : "");
+      out.push([c, (c === "population" ? "population: " : "marker combination: ") + shown]);
+    }
+  }
+  return out;
+}
+function splitLevels(){
+  if(!S.split || !S.cols[S.split]) return [];
+  const v = S.cols[S.split], seen = new Set();
+  const classy = S.split === "population" || S.split === "combination";
+  for(const w of S.wells) for(const i of S.wellRows.get(w)){
+    const s = splitValue(v[i]);
+    if(s === "" || s === "undefined") continue;      // cells outside the gating set
+    if(classy && !classAllowed(s)) continue;         // unreachable with these markers
+    seen.add(s);
+  }
+  // negative first, then rising numbers of markers — reads as a progression
+  const order = ["negative","positive","single","double","triple","quadruple","quintuple"];
+  return [...seen].sort((a,b)=>{
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    if(ia >= 0 && ib >= 0) return ia-ib;
+    if(ia >= 0) return -1;
+    if(ib >= 0) return 1;
+    const ca = (a.match(/\+/g)||[]).length, cb = (b.match(/\+/g)||[]).length;
+    return ca === cb ? naturalCmp(a,b) : ca-cb;
+  });
+}
+
+/* ---------- dose-response ---------------------------------
+   Factor A is the compound, factor B the concentration. Wells at
+   zero dose are the vehicle: they anchor the normalisation and are
+   drawn on the plot, but they cannot enter a fit on a log axis.
+   ---------------------------------------------------------- */
+function concOf(level){
+  let s = String(level).trim();
+  // A decimal comma is normal outside the anglosphere, and "0,5" used to parse
+  // as 0 — silently, and as a duplicate of any real zero dose. Which role a
+  // comma plays is decided by how many digits follow it: exactly three means a
+  // thousands separator, anything else means a decimal point.
+  s = s.replace(/(\d),(\d{3})(?!\d)/g, "$1$2")     // 1,000 -> 1000
+       .replace(/(\d),(\d+)/g, "$1.$2");            // 0,5 / 1,25 -> 0.5 / 1.25
+  const m = s.match(/-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/);
+  return m ? parseFloat(m[0]) : NaN;
+}
+/** Vehicle mean for one compound, falling back to all zero-dose wells. */
+function vehicleMean(compound, sub){
+  const zs = [];
+  for(const w of S.wells){
+    const a = S.asgA.get(w), b = S.asgB.get(w);
+    if(b === undefined) continue;
+    if(concOf(S.fB.levels[b]) !== 0) continue;
+    if(compound != null && a !== undefined && S.fA.levels[a] !== compound) continue;
+    const y = wellValue(w, sub); if(isFinite(y)) zs.push(y);
+  }
+  return zs.length ? zs.reduce((a,b)=>a+b,0)/zs.length : NaN;
+}
+function normalise(y, veh, minResp){
+  if(S.norm === "vehicle") return isFinite(veh) && veh !== 0 ? 100*y/veh : NaN;
+  if(S.norm === "inhib"){
+    if(!isFinite(veh) || !isFinite(minResp) || veh === minResp) return NaN;
+    return 100*(veh - y)/(veh - minResp);
+  }
+  return y;
+}
+function fitAllCurves(){
+  const out = { compounds:[], ok:false, reason:"" };
+  if(!S.fA.levels.length || !S.fB.levels.length){
+    out.reason = "Assign a compound and a concentration to your wells."; return out; }
+  const bad = S.fB.levels.filter(L => !isFinite(concOf(L)));
+  out.badLevels = bad;
+
+  // global floor for % inhibition: the lowest well value seen anywhere
+  let floor = Infinity;
+  for(const w of S.wells){ const y = wellValue(w); if(isFinite(y) && y < floor) floor = y; }
+
+  const cons = { free:{}, bottom0:{fixBottom:0}, top100:{fixTop:100},
+                 both:{fixTop:100, fixBottom:0} }[S.constrain] || {};
+
+  const subs = S.split ? splitLevels() : [undefined];
+  out.subs = S.split ? subs : null;
+  for(const [ai, cmp] of S.fA.levels.entries()){
+    subs.forEach((sub, si)=>{
+      const veh = vehicleMean(cmp, sub);
+      const pts = [], vehPts = [];
+      for(const w of S.wells){
+        const a = S.asgA.get(w), b = S.asgB.get(w);
+        if(a !== ai || b === undefined) continue;
+        const c = concOf(S.fB.levels[b]);
+        let y = wellValue(w, sub); if(!isFinite(y) || !isFinite(c)) continue;
+        y = normalise(y, veh, floor);
+        if(!isFinite(y)) continue;
+        (c > 0 ? pts : vehPts).push({ conc:c, y, well:w });
+      }
+      const fit = pts.length ? fitDoseResponse(pts, cons) : { ok:false, n:0,
+        reason:"No wells assigned above zero concentration." };
+      out.compounds.push({ name:cmp, i:ai, sub, si, pts, vehPts, veh, fit,
+        label: sub === undefined ? cmp : `${cmp} · ${sub}` });
+    });
+  }
+  out.ok = out.compounds.some(c => c.fit.ok);
+  return out;
+}
+
 /** Sort so that a dose series reads as a dose series: "Cisplatin 3uM" comes
  *  before "Cisplatin 10uM", which plain alphabetical ordering gets backwards. */
 function naturalCmp(a, b){
@@ -769,6 +1739,11 @@ function guessControl(names){
 
 /* ---------- analysis -------------------------------------- */
 function analyse(){
+  if(S.mode === "dose"){ S.dr = fitAllCurves(); S.tw = null; return analyseOne(); }
+  if(S.mode === "two"){ S.tw = twoWayAnova(twoWayRows(), S.ssType); return analyseOne(); }
+  S.tw = null; return analyseOne();
+}
+function analyseOne(){
   const gs = S.groups.map((g,i)=>({
     name:g.name, i, wells:groupWells(i), vals:groupValues(i) }));
   const used = gs.filter(g => g.vals.length > 0);
@@ -809,11 +1784,74 @@ function analyse(){
   return S.result;
 }
 
+/* ---------- assay quality ----------------------------------
+   Z'-factor (Zhang, Chung & Oldenburg 1999) asks whether the
+   separation between your two controls is large compared with
+   their combined noise — i.e. whether the assay could detect a
+   hit at all, independently of whether it did.
+   ---------------------------------------------------------- */
+function assayQuality(){
+  const r = S.result;
+  if(!r || !S.ctrlNeg || !S.ctrlPos) return null;
+  const g = n => r.stats.find(s => s.name === n);
+  const neg = g(S.ctrlNeg), pos = g(S.ctrlPos);
+  if(!neg || !pos || neg.i === pos.i) return null;
+  if(neg.n < 2 || pos.n < 2) return { tooFew:true, neg, pos };
+  const z = zPrime(pos.vals, neg.vals);
+  const sm = ssmd(pos.vals, neg.vals);
+  const sb = neg.mean !== 0 ? pos.mean/neg.mean : NaN;
+  const cv = a => 100*sd(a)/Math.abs(mean(a));
+  return { z, ssmd:sm, sb, neg, pos, cvNeg:cv(neg.vals), cvPos:cv(pos.vals),
+           window: Math.abs(pos.mean - neg.mean) };
+}
+function drawQuality(){
+  const card = document.getElementById("qcCard"), box = document.getElementById("qcOut");
+  if(!card) return;
+  const show = S.mode === "one";
+  card.style.display = show ? "" : "none";
+  if(!show) return;
+  const q = assayQuality();
+  if(!q){ box.innerHTML = `<div class="hint">Choose a negative and a positive control
+    condition in the sidebar to get a Z′-factor for this plate.</div>`;
+    document.getElementById("qcTitle").textContent = ""; return; }
+  if(q.tooFew){ box.innerHTML = `<div class="hint">Both controls need at least two wells.</div>`;
+    return; }
+  const band = q.z >= 0.5 ? ["excellent","var(--ok)"]
+             : q.z >= 0   ? ["marginal — usable but a weak hit could be missed","var(--warn)"]
+             :              ["unusable — the controls do not separate","var(--bad)"];
+  document.getElementById("qcTitle").textContent =
+    `${q.pos.name} vs ${q.neg.name} · n = ${q.pos.n} / ${q.neg.n} wells`;
+  box.innerHTML = `<table class="tbl"><thead><tr>${
+    ["metric","value","reading"].map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>
+    <tr><td>Z′-factor</td><td><b style="color:${band[1]}">${q.z.toFixed(3)}</b></td>
+      <td style="color:${band[1]}">${band[0]}</td></tr>
+    <tr><td>SSMD</td><td>${q.ssmd.toFixed(3)}</td>
+      <td>${Math.abs(q.ssmd)>=3?"strong separation":Math.abs(q.ssmd)>=2?"moderate":"weak"}</td></tr>
+    <tr><td>signal window</td><td>${fmt(q.window)}</td><td>difference between control means</td></tr>
+    <tr><td>signal / background</td><td>${isFinite(q.sb)?q.sb.toFixed(2):"–"}</td>
+      <td>ratio of control means</td></tr>
+    <tr><td>CV, ${escapeHtml(q.pos.name)}</td><td>${q.cvPos.toFixed(1)}%</td>
+      <td>${q.cvPos<10?"tight":q.cvPos<20?"acceptable":"noisy"}</td></tr>
+    <tr><td>CV, ${escapeHtml(q.neg.name)}</td><td>${q.cvNeg.toFixed(1)}%</td>
+      <td>${q.cvNeg<10?"tight":q.cvNeg<20?"acceptable":"noisy"}</td></tr>
+    </tbody></table>
+    <div class="hint" style="margin-top:10px">
+    Z′ = 1 − 3(σ<sub>pos</sub> + σ<sub>neg</sub>) / |μ<sub>pos</sub> − μ<sub>neg</sub>|, computed on
+    well means. It is a property of the <b>assay</b>, not of your treatments: it says whether
+    this plate could have detected an effect, which is worth knowing before you interpret one.
+    Above 0.5 is the usual acceptance threshold for screening. A Z′ that is fine on one readout
+    and poor on another is normal — check the one you are actually reporting.</div>`;
+}
+
 /* ---------- warnings -------------------------------------- */
 function warnings(){
   const out = [];
   const r = S.result; if(!r) return out;
   const assigned = [...S.assign.values()].length;
+  if(!r.stats.length && S.mode !== "one"){
+    // the factor modes don't use the one-factor condition list at all
+    return out;
+  }
   if(!r.stats.length){
     out.push(["bad","No conditions yet.",
       "Click wells on the plate to paint them into the active condition, or pick a "+
@@ -832,8 +1870,40 @@ function warnings(){
     "This is a common design but it is a weak one: a 95% interval from n = 3 is "+
     "very wide, and a non-significant result says little either way. Read the "+
     "effect size and its interval rather than the p-value."]);
+  if(S.mode === "two"){
+    const t2 = S.tw;
+    if(t2 && t2.empty && t2.empty.length) out.push(["bad",
+      `${t2.empty.length} empty cell${t2.empty.length===1?"":"s"} in the design.`,
+      "No well has that combination of levels, so the interaction cannot be "+
+      "estimated at all. Only the main effects are shown. "+
+      t2.empty.slice(0,4).map(([a,b])=>`${escapeHtml(a)}×${escapeHtml(b)}`).join(", ") +
+      (t2.empty.length>4 ? ", …" : "")]);
+    if(t2 && t2.ok && !t2.balanced) out.push(["warn",
+      "Unbalanced design.",
+      "Cells contain different numbers of wells, so Type II and Type III sums of "+
+      "squares give different answers and the textbook formulas would be wrong. "+
+      "Both types are computed here by comparing nested model fits, which is correct "+
+      "either way — but say which you used."]);
+    if(t2 && t2.ok && t2.dfRes < 4) out.push(["warn",
+      `Only ${t2.dfRes} residual degrees of freedom.`,
+      "There is very little information left to estimate the noise, so every F "+
+      "and p below is fragile. More replicate wells per cell is the only fix."]);
+  }
+  if(S.mode === "dose" && S.dr){
+    const few = S.dr.compounds.filter(c => c.fit.ok && c.fit.nDoses < 5);
+    if(few.length) out.push(["warn",
+      `Only ${few[0].fit.nDoses} concentrations for ${few.map(c=>escapeHtml(c.name)).join(", ")}.`,
+      "A four-parameter curve has four parameters; with five or fewer doses the fit is "+
+      "barely constrained and the confidence interval on the IC50 will be wide or absent. "+
+      "Six to eight doses spanning the response is the usual minimum."]);
+    const noVeh = S.dr.compounds.filter(c => !c.vehPts.length);
+    if(S.norm !== "raw" && noVeh.length) out.push(["warn",
+      "No vehicle wells for some compounds.",
+      "Normalisation falls back to all zero-dose wells on the plate. If your compounds "+
+      "have separate vehicle controls, assign a 0 concentration to them."]);
+  }
   const unassigned = S.wells.filter(w => !S.assign.has(w)).length;
-  if(unassigned) out.push(["warn",
+  if(unassigned && S.mode === "one") out.push(["warn",
     `${unassigned} well${unassigned===1?"":"s"} not in any condition.`,
     "They are excluded from every statistic here. That is fine if it was "+
     "deliberate — just make sure it was."]);
@@ -855,11 +1925,22 @@ function drawPlate(){
   const t = document.getElementById("plate");
   t.style.borderSpacing = (wsz >= 17 ? 3 : 2)+"px";
   const cell = w => {
+    const v = wellValue(w);
+    if(twoFactor()){
+      // split square: left half is factor A, right half factor B, so a
+      // factorial layout is legible at a glance
+      const a = S.asgA.get(w), b = S.asgB.get(w);
+      const ca = a === undefined ? "#33455C" : gColor(a);
+      const cb = b === undefined ? "#33455C" : gColor(b);
+      const nm = `${a===undefined?"—":S.fA.levels[a]} · ${b===undefined?"—":S.fB.levels[b]}`;
+      return `<div class="well" data-w="${w}" style="background:linear-gradient(90deg,${
+        ca} 0 50%,${cb} 50% 100%)" title="${w} — ${escapeHtml(nm)}${
+        isFinite(v)?` — ${fmt(v)}`:""}"></div>`;
+    }
     const gi = S.assign.get(w);
     const col = gi === undefined ? "var(--off)" : gColor(gi);
     const lbl = (gi === undefined || wsz < 15) ? "" : String(gi+1);
     const name = gi === undefined ? "unassigned" : S.groups[gi].name;
-    const v = wellValue(w);
     return `<div class="well${gi===undefined?" unassigned":""}" data-w="${w}"
       style="background:${col}" title="${w} — ${escapeHtml(name)}${
         isFinite(v)?` — ${fmt(v)}`:""}">${lbl}</div>`;
@@ -886,15 +1967,30 @@ function drawPlate(){
   let painting = false;
   t.querySelectorAll(".well[data-w]").forEach(el=>{
     const paint = () => {
-      if(!S.groups.length) return;
       const w = el.dataset.w;
+      if(twoFactor()){
+        if(!S.fA.levels.length || !S.fB.levels.length) return;
+        const both = S.paint === "AB";
+        if(both || S.paint === "A"){
+          if(!both && S.asgA.get(w) === S.actA) S.asgA.delete(w); else S.asgA.set(w, S.actA); }
+        if(both || S.paint === "B"){
+          if(!both && S.asgB.get(w) === S.actB) S.asgB.delete(w); else S.asgB.set(w, S.actB); }
+        refresh(); return;
+      }
+      if(!S.groups.length) return;
       if(S.assign.get(w) === S.active) S.assign.delete(w);
       else S.assign.set(w, S.active);
       refresh();
     };
     el.addEventListener("pointerdown", e => { e.preventDefault(); painting = true; paint(); });
-    el.addEventListener("pointerenter", () => { if(painting && S.groups.length){
-      S.assign.set(el.dataset.w, S.active); refresh(); } });
+    el.addEventListener("pointerenter", () => {
+      if(!painting) return;
+      if(twoFactor()){
+        const w = el.dataset.w, both = S.paint === "AB";
+        if(both || S.paint === "A") S.asgA.set(w, S.actA);
+        if(both || S.paint === "B") S.asgB.set(w, S.actB);
+        refresh();
+      } else if(S.groups.length){ S.assign.set(el.dataset.w, S.active); refresh(); } });
   });
   addEventListener("pointerup", ()=>{ painting = false; }, { once:true });
 }
@@ -1044,6 +2140,518 @@ function metricLabel(){
   return m ? m.label : "";
 }
 
+/* ---------- rendering: interaction plot -------------------- */
+/* The plot that makes a two-way result readable: cell means joined across
+   factor A, one line per level of B. Parallel lines mean no interaction;
+   lines that converge or cross mean the effect of one factor depends on the
+   other, which is exactly what the interaction term tests. */
+function drawInteraction(){
+  const cv = document.getElementById("cInter");
+  if(!cv) return;
+  const W = cv.parentElement.clientWidth, H = 300, dpr = devicePixelRatio||1;
+  cv.width = W*dpr; cv.height = H*dpr; cv.style.height = H+"px";
+  const g = cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0);
+  g.clearRect(0,0,W,H);
+  const t = S.tw;
+  if(!t || !t.ok){ note(g,W,H, t && t.reason ? t.reason : "assign both factors"); return; }
+
+  const padL = 56, padB = 46, padT = 14, padR = 108;
+  const rows = twoWayRows();
+  const all = rows.map(r=>r.y);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  if(!(hi>lo)){ hi = lo+1; lo -= 1; }
+  const pd = (hi-lo)*0.14; lo -= pd; hi += pd;
+  const Y = v => H-padB - (v-lo)/(hi-lo)*(H-padB-padT);
+  const X = i => padL + (t.a === 1 ? 0.5 : i/(t.a-1))*(W-padL-padR);
+
+  g.strokeStyle = "#22303F"; g.fillStyle = css("--faint");
+  g.font = "10px "+css("--mono"); g.textAlign = "right";
+  for(let i=0;i<=4;i++){ const v = lo+(hi-lo)*i/4, y = Y(v);
+    g.beginPath(); g.moveTo(padL,y); g.lineTo(W-padR,y); g.stroke();
+    g.fillText(fmt(v), padL-7, y+3); }
+
+  t.Lb.forEach((B,bi)=>{
+    const col = gColor(bi);
+    // individual wells, lightly, so the means aren't the only thing shown
+    t.La.forEach((A,ai)=>{
+      const c = t.cellMean.get(A+"\u0000"+B); if(!c) return;
+      const rnd = mulberry32(ai*131 + bi*17);
+      c.vals.forEach(v=>{ g.beginPath();
+        g.arc(X(ai)+(rnd()-0.5)*14, Y(v), 2.4, 0, 6.2832);
+        g.fillStyle = col+"66"; g.fill(); });
+    });
+    g.strokeStyle = col; g.lineWidth = 2; g.beginPath();
+    let started = false;
+    t.La.forEach((A,ai)=>{
+      const c = t.cellMean.get(A+"\u0000"+B); if(!c) return;
+      const x = X(ai), y = Y(c.mean);
+      started ? g.lineTo(x,y) : (g.moveTo(x,y), started = true);
+    });
+    g.stroke();
+    t.La.forEach((A,ai)=>{
+      const c = t.cellMean.get(A+"\u0000"+B); if(!c) return;
+      g.beginPath(); g.arc(X(ai), Y(c.mean), 4.5, 0, 6.2832);
+      g.fillStyle = col; g.fill();
+      g.strokeStyle = "#0B1017"; g.lineWidth = 1.2; g.stroke();
+    });
+    // legend
+    const ly = padT + 6 + bi*15;
+    g.strokeStyle = col; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(W-padR+10, ly); g.lineTo(W-padR+28, ly); g.stroke();
+    g.beginPath(); g.arc(W-padR+19, ly, 3.4, 0, 6.2832); g.fillStyle = col; g.fill();
+    g.fillStyle = css("--ink"); g.font = "10px "+css("--mono"); g.textAlign = "left";
+    g.fillText(String(B).slice(0,12), W-padR+34, ly+3.5);
+  });
+  g.fillStyle = css("--dim"); g.font = "10px "+css("--mono"); g.textAlign = "left";
+  g.fillText(S.fB.name, W-padR+10, padT-2);
+
+  g.textAlign = "center"; g.fillStyle = css("--ink"); g.font = "11px "+css("--sans");
+  t.La.forEach((A,ai)=> g.fillText(String(A).slice(0,14), X(ai), H-24));
+  g.fillStyle = css("--dim"); g.font = "10px "+css("--mono");
+  g.fillText(S.fA.name, padL+(W-padL-padR)/2, H-8);
+  g.save(); g.translate(13, padT+(H-padB-padT)/2); g.rotate(-Math.PI/2);
+  g.fillText(metricLabel(), 0, 0); g.restore();
+  g.textAlign = "left";
+}
+
+/* ---------- post-hoc for the two-way model ------------------
+   Comparisons use the pooled error term from the ANOVA rather than
+   a fresh t-test per pair: that is the textbook post-hoc, it uses
+   every well to estimate the noise, and it keeps the comparisons
+   consistent with the F tests above them.
+
+       t = (m1 - m2) / sqrt(MSE * (1/n1 + 1/n2)),  df = df_residual
+
+   Which set to read depends on the interaction. If it is
+   significant the marginal means are misleading — the effect of one
+   factor depends on the other — so the simple effects are what
+   matter. If it is not, the marginal comparisons are the answer.
+   ---------------------------------------------------------- */
+function twoWayPostHoc(tw){
+  if(!tw || !tw.ok) return null;
+  const MSE = tw.residual.ms, df = tw.residual.df;
+  const cell = (a,b) => tw.cellMean.get(a+"\u0000"+b);
+  const cmp = (m1,n1,m2,n2,label,group) => {
+    if(!(n1>0 && n2>0)) return null;
+    const se = Math.sqrt(MSE*(1/n1 + 1/n2));
+    const d = m1-m2, tstat = d/se;
+    const tc = tCrit(0.05, df);
+    return { label, group, diff:d, lo:d-tc*se, hi:d+tc*se,
+             t:tstat, p:tTest2sided(tstat, df), n1, n2 };
+  };
+  // marginal means, weighted by the wells actually present
+  const marg = (levels, other, byA) => {
+    const stats = levels.map(L => {
+      let s = 0, n = 0;
+      for(const O of other){
+        const c = byA ? cell(L,O) : cell(O,L);
+        if(c){ s += c.mean*c.n; n += c.n; }
+      }
+      return { L, mean: n ? s/n : NaN, n };
+    });
+    const out = [];
+    for(let i=0;i<stats.length;i++) for(let j=i+1;j<stats.length;j++){
+      const r = cmp(stats[i].mean, stats[i].n, stats[j].mean, stats[j].n,
+                    `${escapeHtml(stats[i].L)} vs ${escapeHtml(stats[j].L)}`, null);
+      if(r) out.push(r);
+    }
+    return out;
+  };
+  const marginalA = marg(tw.La, tw.Lb, true);
+  const marginalB = marg(tw.Lb, tw.La, false);
+
+  // simple effects: levels of one factor compared inside each level of the other
+  const simpleA = [], simpleB = [];
+  for(const B of tw.Lb) for(let i=0;i<tw.La.length;i++) for(let j=i+1;j<tw.La.length;j++){
+    const c1 = cell(tw.La[i],B), c2 = cell(tw.La[j],B);
+    if(!c1 || !c2) continue;
+    const r = cmp(c1.mean, c1.n, c2.mean, c2.n,
+      `${escapeHtml(tw.La[i])} vs ${escapeHtml(tw.La[j])}`, escapeHtml(B));
+    if(r) simpleA.push(r);
+  }
+  for(const A of tw.La) for(let i=0;i<tw.Lb.length;i++) for(let j=i+1;j<tw.Lb.length;j++){
+    const c1 = cell(A,tw.Lb[i]), c2 = cell(A,tw.Lb[j]);
+    if(!c1 || !c2) continue;
+    const r = cmp(c1.mean, c1.n, c2.mean, c2.n,
+      `${escapeHtml(tw.Lb[i])} vs ${escapeHtml(tw.Lb[j])}`, escapeHtml(A));
+    if(r) simpleB.push(r);
+  }
+  // correct within each family, not across all four
+  const adj = arr => {
+    const ps = arr.map(x=>x.p);
+    const a = S.corr === "holm" ? holm(ps) : S.corr === "bh" ? bh(ps) : ps.slice();
+    arr.forEach((x,i)=> x.padj = a[i]);
+    return arr;
+  };
+  return { marginalA:adj(marginalA), marginalB:adj(marginalB),
+           simpleA:adj(simpleA), simpleB:adj(simpleB), df, MSE };
+}
+
+/* ---------- rendering: two-way tables ---------------------- */
+function drawTwoWay(){
+  const box = document.getElementById("twoway");
+  if(!box) return;
+  const t = S.tw;
+  if(S.mode !== "two"){ box.innerHTML = ""; return; }
+  if(!t || !t.ok){
+    box.innerHTML = `<div class="hint">${t && t.reason ? escapeHtml(t.reason)
+      : "Assign a level of each factor to your wells."}</div>`;
+    return;
+  }
+  const row = (lbl, x) => x ? `<tr><td>${lbl}</td><td>${x.ss.toFixed(3)}</td>`+
+    `<td>${x.df}</td><td>${x.ms.toFixed(3)}</td><td>${x.F.toFixed(3)}</td>`+
+    `<td class="sig ${x.p<0.05?"y":"n"}">${fmtP(x.p)}</td>`+
+    `<td class="sig ${x.p<0.05?"y":"n"}">${x.p<0.05?"*":"ns"}</td></tr>` : "";
+  let html = `<table class="tbl"><thead><tr>`+
+    ["term","SS","df","MS","F","p",""].map(h=>`<th>${h}</th>`).join("")+
+    `</tr></thead><tbody>`+
+    row(escapeHtml(S.fA.name), t.A) + row(escapeHtml(S.fB.name), t.B) +
+    row(escapeHtml(S.fA.name)+" × "+escapeHtml(S.fB.name), t.AB) +
+    `<tr><td>residual</td><td>${t.residual.ss.toFixed(3)}</td><td>${t.residual.df}</td>`+
+    `<td>${t.residual.ms.toFixed(3)}</td><td></td><td></td><td></td></tr></tbody></table>`;
+
+  // cell means grid
+  html += `<div class="sec-h" style="margin:16px 0 6px"><span>Cell means</span>`+
+    `<span class="n">mean (n wells)</span></div>`;
+  html += `<table class="tbl"><thead><tr><th>${escapeHtml(S.fA.name)} \\ ${
+    escapeHtml(S.fB.name)}</th>` +
+    t.Lb.map(B=>`<th>${escapeHtml(B)}</th>`).join("") + `<th>row mean</th></tr></thead><tbody>`;
+  for(const A of t.La){
+    html += `<tr><td>${escapeHtml(A)}</td>` + t.Lb.map(B=>{
+      const c = t.cellMean.get(A+"\u0000"+B);
+      return `<td>${c ? `${fmt(c.mean)} <span style="color:var(--faint)">(${c.n})</span>`
+        : '<span style="color:var(--bad)">empty</span>'}</td>`;
+    }).join("") + `<td style="color:var(--dim)">${fmt(t.meanA.get(A))}</td></tr>`;
+  }
+  html += `<tr><td style="color:var(--dim)">column mean</td>` +
+    t.Lb.map(B=>`<td style="color:var(--dim)">${fmt(t.meanB.get(B))}</td>`).join("") +
+    `<td style="color:var(--dim)">${fmt(t.grand)}</td></tr></tbody></table>`;
+  box.innerHTML = html;
+
+  // ---- post-hoc ----
+  const ph = twoWayPostHoc(t);
+  const phBox = document.getElementById("twPost");
+  if(phBox){
+    const inter = t.AB && t.AB.p < 0.05;
+    const tbl = (title, rows, withGroup, why) => {
+      if(!rows.length) return "";
+      return `<div class="sec-h" style="margin:16px 0 6px"><span>${title}</span>
+        <span class="n">${why}</span></div>
+        <table class="tbl"><thead><tr>${
+          [...(withGroup?["within"]:[]),"comparison","difference","95% CI","t",
+           S.corr==="none"?"p":"p adjusted",""].map(h=>`<th>${h}</th>`).join("")
+        }</tr></thead><tbody>` + rows.map(r=>{
+          const sig = isFinite(r.padj) && r.padj < 0.05;
+          return `<tr>${withGroup?`<td>${r.group}</td>`:""}<td>${r.label}</td>`+
+            `<td>${fmt(r.diff)}</td><td>${fmt(r.lo)} – ${fmt(r.hi)}</td>`+
+            `<td>${fmt(r.t)}</td>`+
+            `<td class="sig ${sig?"y":"n"}">${fmtP(r.padj)}</td>`+
+            `<td class="sig ${sig?"y":"n"}">${sig?"*":"ns"}</td></tr>`;
+        }).join("") + `</tbody></table>`;
+    };
+    const primary = inter
+      ? tbl(`Simple effects of ${escapeHtml(S.fA.name)}`, ph.simpleA, true,
+            `within each level of ${escapeHtml(S.fB.name)} — read these, the interaction is significant`) +
+        tbl(`Simple effects of ${escapeHtml(S.fB.name)}`, ph.simpleB, true,
+            `within each level of ${escapeHtml(S.fA.name)}`)
+      : tbl(`${escapeHtml(S.fA.name)} marginal means`, ph.marginalA, false,
+            "averaged over the other factor") +
+        tbl(`${escapeHtml(S.fB.name)} marginal means`, ph.marginalB, false,
+            "averaged over the other factor");
+    const secondary = inter
+      ? `<details style="margin-top:14px"><summary class="hint" style="cursor:pointer">
+           marginal comparisons (interpret with care — the interaction is significant)
+         </summary>` +
+         tbl(`${escapeHtml(S.fA.name)} marginal means`, ph.marginalA, false, "") +
+         tbl(`${escapeHtml(S.fB.name)} marginal means`, ph.marginalB, false, "") +
+         `</details>`
+      : `<details style="margin-top:14px"><summary class="hint" style="cursor:pointer">
+           simple effects, level by level
+         </summary>` +
+         tbl(`Simple effects of ${escapeHtml(S.fA.name)}`, ph.simpleA, true, "") +
+         tbl(`Simple effects of ${escapeHtml(S.fB.name)}`, ph.simpleB, true, "") +
+         `</details>`;
+    phBox.innerHTML = primary + secondary +
+      `<div class="hint" style="margin-top:10px">Comparisons use the pooled error
+       term from the model above (MSE = ${ph.MSE.toFixed(4)}, df = ${ph.df}), which is
+       the standard post-hoc: every well contributes to the noise estimate.
+       ${S.corr==="none" ? "<b>No correction is applied.</b>"
+         : `Corrected by ${S.corr==="holm"?"Holm":"Benjamini–Hochberg"} within each
+            family of comparisons, not across all of them.`}</div>`;
+  }
+
+  const note = document.getElementById("twNote");
+  const bits = [];
+  bits.push(t.balanced
+    ? "Balanced design — Type II and Type III sums of squares agree, so the choice doesn't matter."
+    : `Unbalanced design — Type II and Type III differ here, and the textbook `+
+      `shortcut formulas would be wrong. Currently showing <b>Type ${t.type}</b>.`);
+  if(t.AB && t.AB.p < 0.05) bits.push(
+    "The interaction is significant, so the main effects are hard to interpret on "+
+    "their own: the effect of one factor depends on the level of the other. Read the "+
+    "interaction plot, and compare cells rather than margins.");
+  else if(t.AB) bits.push(
+    "No significant interaction, so the main effects can be read as they stand.");
+  note.innerHTML = bits.join(" ");
+}
+
+/* ---------- rendering: dose-response ----------------------- */
+function drawDose(){
+  const cv = document.getElementById("cDose");
+  if(!cv) return;
+  const W = cv.parentElement.clientWidth, H = 330, dpr = devicePixelRatio||1;
+  cv.width = W*dpr; cv.height = H*dpr; cv.style.height = H+"px";
+  const g = cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0);
+  g.clearRect(0,0,W,H);
+  const D = S.dr;
+  if(!D || !D.ok){ note(g,W,H, D && D.reason ? D.reason : "assign compound and concentration"); return; }
+
+  const padL = 58, padB = 46, padT = 14, padR = 128, vehW = 34;
+  const all = D.compounds.flatMap(c => [...c.pts, ...c.vehPts]).map(p=>p.y);
+  if(!all.length){ note(g,W,H,"no usable wells"); return; }
+  // The axis is set by the DATA, never by fitted asymptotes: an unconstrained
+  // fit on an inactive compound can put "bottom" at -400 and would otherwise
+  // squash every real curve into a sliver at the top.
+  let lo = Math.min(...all), hi = Math.max(...all);
+  if(!(hi>lo)){ hi = lo+1; lo -= 1; }
+  const pd = (hi-lo)*0.1; lo -= pd; hi += pd;
+  const Y = v => H-padB - (v-lo)/(hi-lo)*(H-padB-padT);
+  const Yc = v => Math.max(padT-2, Math.min(H-padB+2, Y(v)));   // clipped, for curves
+
+  const cs = D.compounds.flatMap(c=>c.pts.map(p=>p.conc)).filter(c=>c>0);
+  const xlo = Math.log10(Math.min(...cs)), xhi = Math.log10(Math.max(...cs));
+  const x0 = padL + vehW + 10;
+  const X = lc => x0 + (xhi>xlo ? (lc-xlo)/(xhi-xlo) : 0.5)*(W-x0-padR);
+
+  g.strokeStyle = "#22303F"; g.fillStyle = css("--faint");
+  g.font = "10px "+css("--mono"); g.textAlign = "right";
+  for(let i=0;i<=4;i++){ const v = lo+(hi-lo)*i/4, y = Y(v);
+    g.beginPath(); g.moveTo(padL, y); g.lineTo(W-padR, y); g.stroke();
+    g.fillText(fmt(v), padL-7, y+3); }
+  // decade ticks on the log axis
+  g.textAlign = "center";
+  for(let d=Math.floor(xlo); d<=Math.ceil(xhi); d++){
+    if(d<xlo-1e-9 || d>xhi+1e-9) continue;
+    const x = X(d);
+    g.strokeStyle = "#22303F"; g.beginPath(); g.moveTo(x,padT); g.lineTo(x,H-padB); g.stroke();
+    g.fillStyle = css("--faint");
+    g.fillText(d===0?"1":`1e${d}`, x, H-padB+14);
+  }
+  // vehicle band, kept off the log axis where it belongs
+  const vx = padL + vehW/2;
+  g.strokeStyle = "#22303F"; g.setLineDash([3,3]);
+  g.beginPath(); g.moveTo(padL+vehW+4, padT); g.lineTo(padL+vehW+4, H-padB); g.stroke();
+  g.setLineDash([]);
+  g.fillStyle = css("--faint"); g.fillText("0", vx, H-padB+14);
+
+  const DASH = [[], [6,4], [2,3], [9,3,2,3]];
+  D.compounds.forEach(c=>{
+    const col = gColor(c.i);
+    const dash = DASH[(c.si||0) % DASH.length];
+    const vr = mulberry32((c.i*31 + (c.si||0))*2654435761);
+    c.vehPts.forEach(p=>{ g.beginPath(); g.arc(vx+(vr()-0.5)*12, Y(p.y), 3, 0, 6.2832);
+      g.fillStyle = col+"99"; g.fill(); });
+    c.pts.forEach(p=>{ g.beginPath(); g.arc(X(Math.log10(p.conc)), Y(p.y), 3.2, 0, 6.2832);
+      g.fillStyle = col+"CC"; g.fill();
+      g.strokeStyle = "#0B1017"; g.lineWidth = 1; g.stroke(); });
+    if(c.fit.ok){
+      g.strokeStyle = col; g.lineWidth = 2; g.beginPath();
+      g.save(); g.beginPath(); g.rect(x0-2, padT-2, W-x0-padR+4, H-padB-padT+4); g.clip();
+      g.setLineDash(dash);
+      g.beginPath();
+      for(let i=0;i<=200;i++){
+        const lc = xlo + (xhi-xlo)*i/200;
+        const yy = hill4(lc, [c.fit.top, c.fit.bottom, c.fit.logIC50, c.fit.hill]);
+        i ? g.lineTo(X(lc), Yc(yy)) : g.moveTo(X(lc), Yc(yy));
+      }
+      g.stroke(); g.setLineDash([]); g.restore();
+      // IC50 marker, only when it sits inside the tested range
+      if(!c.fit.extrapolated){
+        const gx = X(c.fit.logIC50), gy = Yc((c.fit.top + c.fit.bottom)/2);
+        g.setLineDash([3,3]); g.lineWidth = 1; g.strokeStyle = col;
+        g.beginPath(); g.moveTo(gx, H-padB); g.lineTo(gx, gy); g.stroke();
+        g.setLineDash([]);
+        g.beginPath(); g.arc(gx, gy, 4, 0, 6.2832);
+        g.fillStyle = "#0B1017"; g.fill(); g.strokeStyle = col; g.lineWidth = 2; g.stroke();
+      }
+    }
+    if((c.si||0) === 0){
+      const ly = padT + 6 + c.i*15;
+      g.strokeStyle = col; g.lineWidth = 2; g.setLineDash([]);
+      g.beginPath(); g.moveTo(W-padR+10, ly); g.lineTo(W-padR+30, ly); g.stroke();
+      g.fillStyle = css("--ink"); g.font = "10px "+css("--mono"); g.textAlign = "left";
+      g.fillText(String(c.name).slice(0,14), W-padR+35, ly+3.5);
+    }
+  });
+  if(D.subs){
+    const base = padT + 6 + S.fA.levels.length*15 + 8;
+    g.fillStyle = css("--dim"); g.font = "9.5px "+css("--mono"); g.textAlign = "left";
+    g.fillText(S.split.replace(/^pos_/,"").replace(/^foci_pos_/,""), W-padR+10, base);
+    D.subs.forEach((s,si)=>{
+      const ly = base + 13 + si*14;
+      g.strokeStyle = css("--dim"); g.lineWidth = 2;
+      g.setLineDash(DASH[si % DASH.length]);
+      g.beginPath(); g.moveTo(W-padR+10, ly); g.lineTo(W-padR+30, ly); g.stroke();
+      g.setLineDash([]);
+      g.fillStyle = css("--ink"); g.font = "10px "+css("--mono");
+      g.fillText(String(s).slice(0,13), W-padR+35, ly+3.5);
+    });
+  }
+  g.fillStyle = css("--dim"); g.font = "10px "+css("--mono"); g.textAlign = "center";
+  g.fillText(concLabel() + " · log scale", padL+(W-padL-padR)/2, H-6);
+  g.save(); g.translate(13, padT+(H-padB-padT)/2); g.rotate(-Math.PI/2);
+  g.fillText(S.norm === "raw" ? metricLabel()
+    : S.norm === "vehicle" ? "% of vehicle" : "% inhibition", 0, 0); g.restore();
+  g.textAlign = "left";
+}
+
+function drawDoseTable(){
+  const box = document.getElementById("tDose"), note = document.getElementById("drNote");
+  if(!box) return;
+  const D = S.dr;
+  if(S.mode !== "dose"){ box.innerHTML = ""; return; }
+  if(!D || !D.ok){ box.innerHTML = ""; note.textContent = D ? D.reason : ""; return; }
+
+  const siKey = S.si;
+  box.innerHTML = "<thead><tr>" +
+    ["compound", ...(D.subs?["population"]:[]), "wells","doses",
+     "IC50 / EC50"+unitTh(),
+     "95% CI"+unitTh(),"Hill","top","bottom","span","R²",""]
+      .map(h=>`<th>${h}</th>`).join("") + "</tr></thead><tbody>" +
+    D.compounds.map(c=>{
+      const f = c.fit;
+      const cName = `<td><span class="pill" style="border-color:${gColor(c.i)};color:${
+        gColor(c.i)}">${escapeHtml(c.name)}</span></td>` +
+        (D.subs ? `<td>${escapeHtml(String(c.sub))}</td>` : "");
+      if(!f.ok) return `<tr>${cName}<td>${c.pts.length}</td>`+
+        `<td colspan="9" style="color:var(--faint)">${escapeHtml(f.reason||"not fitted")}</td></tr>`;
+      const bad = [];
+      if(f.extrapolated) bad.push(["extrapolated",
+        "the fitted value lies outside the concentration range you tested"]);
+      if(f.r2 < 0.8) bad.push(["R² low", "the curve does not describe the data"]);
+      if(Math.abs(f.hill) > 5) bad.push(["Hill "+fmt(Math.abs(f.hill)),
+        "an implausibly steep slope usually means the curve is not constrained by the data"]);
+      const flag = bad.length
+        ? bad.map(([l,tt])=>`<span class="sig n" title="${tt}">${l}</span>`).join(" ")
+        : `<span class="sig y">ok</span>`;
+      return `<tr>${cName}`+
+        `<td>${c.pts.length}</td><td>${f.nDoses}</td>`+
+        `<td><b>${sci(f.ic50)}</b> <span style="color:var(--faint)">${f.direction}</span></td>`+
+        `<td>${isFinite(f.ic50Lo)?`${sci(f.ic50Lo)} – ${sci(f.ic50Hi)}`:"–"}</td>`+
+        `<td>${fmt(Math.abs(f.hill))}</td><td>${fmt(f.top)}</td><td>${fmt(f.bottom)}</td>`+
+        `<td>${fmt(f.span)}</td><td>${f.r2.toFixed(4)}</td><td>${flag}</td></tr>`;
+    }).join("") + "</tbody>";
+
+  const bits = [];
+  const nOK = D.compounds.filter(c=>c.fit.ok).length;
+  bits.push(`${nOK} of ${D.compounds.length} compounds fitted.`);
+  if(D.badLevels && D.badLevels.length) bits.push(
+    `<b>Could not read a number from: ${D.badLevels.map(escapeHtml).join(", ")}.</b> `+
+    `Concentration levels need a numeric value in them, like "10" or "10 uM".`);
+  if(D.compounds.some(c=>c.fit.ok && c.fit.extrapolated)) bits.push(
+    "<b>One or more IC50s fall outside the concentration range tested.</b> "+
+    "Those numbers are extrapolations from the fitted curve, not measurements — "+
+    "the honest report is “> highest dose” or “< lowest dose”.");
+  if(D.compounds.some(c=>c.fit.ok && (c.fit.r2 < 0.8 || Math.abs(c.fit.hill) > 5))) bits.push(
+    "A low R² or an extreme Hill slope means the curve is not constrained by your data — "+
+    "usually a compound that simply did not produce a response over the doses tested. "+
+    "Report it as inactive rather than quoting the number.");
+  bits.push("The IC50 here is the <i>relative</i> IC50 — the dose halfway between the "+
+    "fitted top and bottom. If a curve does not reach a lower plateau, that is not the "+
+    "same as half of the vehicle response, and the difference can be large.");
+  note.innerHTML = bits.join(" ");
+
+  // pairwise curve comparison
+  const cbox = document.getElementById("cmpOut");
+  if(cbox){
+    const ok = D.compounds.filter(c=>c.fit.ok);
+    const pairs = [];
+    if(D.subs){
+      // With cells split into populations, the interesting comparison is
+      // between populations of the SAME compound: does the positive
+      // population respond at a different dose from the negative one?
+      for(const cmp of S.fA.levels){
+        const set = ok.filter(c => c.name === cmp);
+        for(let i=0;i<set.length;i++) for(let j=i+1;j<set.length;j++)
+          pairs.push({ A:set[i], B:set[j], within:cmp,
+                       r:compareCurves(set[i].pts, set[j].pts, set[i].fit, set[j].fit) });
+      }
+      // then the same population across compounds
+      for(const sub of D.subs){
+        const set = ok.filter(c => c.sub === sub);
+        for(let i=0;i<set.length;i++) for(let j=i+1;j<set.length;j++)
+          pairs.push({ A:set[i], B:set[j], within:null,
+                       r:compareCurves(set[i].pts, set[j].pts, set[i].fit, set[j].fit) });
+      }
+    } else {
+      for(let i=0;i<ok.length;i++) for(let j=i+1;j<ok.length;j++)
+        pairs.push({ A:ok[i], B:ok[j],
+                     r:compareCurves(ok[i].pts, ok[j].pts, ok[i].fit, ok[j].fit) });
+    }
+    const ps = pairs.map(x => x.r.ok ? x.r.p : NaN);
+    const adj = S.corr === "holm" ? holm(ps) : S.corr === "bh" ? bh(ps) : ps.slice();
+    pairs.forEach((x,i)=> x.padj = adj[i]);
+    cbox.innerHTML = pairs.length ? `<div class="sec-h" style="margin:16px 0 6px">
+      <span>Curve comparison</span><span class="n">shared-IC50 F test · ${
+        S.corr==="none"?"uncorrected":S.corr==="holm"?"Holm":"BH"}${
+        D.subs?" · populations within a compound first, then across compounds":""}</span></div>
+      <table class="tbl"><thead><tr>${
+        ["compounds","IC50 A"+unitTh(),
+         "IC50 B"+unitTh(),"fold difference","F","p",
+         S.corr==="none"?"p":"p adjusted",""].map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>` +
+      pairs.map(x=>{
+        const nm = x.within
+          ? `<b>${escapeHtml(x.within)}</b>: ${escapeHtml(String(x.A.sub))} vs ${
+              escapeHtml(String(x.B.sub))}`
+          : `${escapeHtml(x.A.label || x.A.name)} vs ${escapeHtml(x.B.label || x.B.name)}`;
+        if(!x.r.ok) return `<tr><td>${nm}</td>`+
+          `<td colspan="7" style="color:var(--faint)">${escapeHtml(x.r.reason)}</td></tr>`;
+        const sig = isFinite(x.padj) && x.padj < 0.05;
+        const fold = x.r.ratio >= 1 ? x.r.ratio : 1/x.r.ratio;
+        return `<tr><td>${nm}</td>`+
+          `<td>${sci(x.A.fit.ic50)}</td><td>${sci(x.B.fit.ic50)}</td>`+
+          `<td><b>${fold.toFixed(2)}×</b></td>`+
+          `<td>${x.r.F.toFixed(2)}</td><td>${fmtP(x.r.p)}</td>`+
+          `<td class="sig ${sig?"y":"n"}">${fmtP(x.padj)}</td>`+
+          `<td class="sig ${sig?"y":"n"}">${sig?"*":"ns"}</td></tr>`;
+      }).join("") + `</tbody></table>
+      <div class="hint" style="margin-top:8px">Each pair is fitted twice: once with its own
+      IC50 for each compound, once forced to share a single IC50. The F test asks whether
+      forcing them together costs a significant amount of fit. This is the right way to ask
+      whether two potencies differ — <b>overlapping confidence intervals are not a test</b>,
+      and judging by eye is conservative in a way with no stated error rate.</div>` : "";
+  }
+
+  // selectivity index against a second readout
+  const siBox = document.getElementById("siOut");
+  if(siBox){
+    if(!siKey){ siBox.innerHTML = ""; return; }
+    const keep = S.metric; S.metric = siKey;
+    const other = fitAllCurves(); S.metric = keep;
+    const rows = D.compounds.map(c=>{
+      const o = other.compounds.find(x=>x.name===c.name);
+      if(!c.fit.ok || !o || !o.fit.ok) return null;
+      return { name:c.name, i:c.i, a:c.fit.ic50, b:o.fit.ic50, si:o.fit.ic50/c.fit.ic50 };
+    }).filter(Boolean);
+    siBox.innerHTML = rows.length ? `<div class="sec-h" style="margin:14px 0 6px">
+      <span>Selectivity index</span><span class="n">${escapeHtml(
+        S.metrics.find(m=>m.key===siKey)?.label||siKey)} ÷ ${escapeHtml(metricLabel())}</span></div>
+      <table class="tbl"><thead><tr>${["compound",
+        "IC50 primary"+unitTh(),
+        "IC50 secondary"+unitTh(),"SI"]
+        .map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>` +
+      rows.map(r=>`<tr><td><span class="pill" style="border-color:${gColor(r.i)};color:${
+        gColor(r.i)}">${escapeHtml(r.name)}</span></td><td>${sci(r.a)}</td><td>${sci(r.b)}</td>`+
+        `<td class="sig ${r.si>=10?"y":"n"}"><b>${fmt(r.si)}</b></td></tr>`).join("") +
+      `</tbody></table><div class="hint" style="margin-top:8px">SI = secondary ÷ primary. `+
+      `A large SI means the effect you care about happens at doses well below the one you `+
+      `are comparing against — commonly the cytotoxicity readout. Compute both from the `+
+      `same wells or the ratio is not interpretable.</div>` : "";
+  }
+}
+const sci = v => !isFinite(v) ? "–" : (v >= 1000 || v < 0.01)
+  ? v.toExponential(2) : v >= 10 ? v.toFixed(1) : v.toPrecision(3);
+
 /* ---------- rendering: tables ------------------------------ */
 function drawTables(){
   const r = S.result;
@@ -1101,14 +2709,48 @@ function drawTables(){
 /* ---------- refresh --------------------------------------- */
 function refresh(){
   analyse();
-  drawPlate(); drawGroups(); drawSuper(); drawEffect(); drawTables();
+  // Visibility first: a canvas inside a display:none card reports
+  // clientWidth 0, and everything drawn into it is lost.
+  const dose = S.mode === "dose";
+  const twoF = S.mode === "two" || dose;
+  document.getElementById("paneOne").style.display = twoF ? "none" : "";
+  document.getElementById("paneTwo").style.display = twoF ? "" : "none";
+  document.getElementById("twCard").style.display = (S.mode === "two") ? "" : "none";
+  document.getElementById("drCard").style.display = dose ? "" : "none";
+  document.getElementById("doseOpts").style.display = dose ? "" : "none";
+  document.getElementById("ssRow").style.display = dose ? "none" : "";
+  document.getElementById("ssType").style.display = dose ? "none" : "";
+  // The one-factor cards describe the one-factor condition list. In the factor
+  // modes they would show a stale grouping that has nothing to do with the
+  // design on screen, so they are hidden outright rather than left behind.
+  for(const id of ["ovCard","grpCard","cmpCard"]){
+    const el = document.getElementById(id);
+    if(el) el.style.display = twoF ? "none" : "";
+  }
+
+  drawPlate(); drawGroups(); drawFactors();
+  drawSuper(); drawEffect(); drawTables();
+  drawInteraction(); drawTwoWay(); drawDose(); drawDoseTable(); drawQuality();
+  if(dose && S.dr && S.dr.ok)
+    document.getElementById("drTitle").textContent =
+      `${S.fA.levels.length} compound${S.fA.levels.length===1?"":"s"} · ` +
+      `${S.fB.levels.length} concentrations${S.unit?" in "+S.unit:""} · ` +
+      (S.norm==="raw" ? "raw" : S.norm==="vehicle" ? "% of vehicle" : "% inhibition") +
+      " · " + (S.constrain==="free" ? "free fit" : "constrained");
+  if(S.mode === "two" && S.tw && S.tw.ok)
+    document.getElementById("twTitle").textContent =
+      `${S.fA.name} (${S.tw.a}) × ${S.fB.name} (${S.tw.b}) · ${S.tw.N} wells · `+
+      `${S.tw.balanced ? "balanced" : "unbalanced"} · Type ${S.tw.type} SS`;
+  if(dose){ syncUnit(); drawSplitHint(); }
 
   const r = S.result;
   document.getElementById("sWells").textContent = `${S.assign.size}/${S.wells.length}`;
-  document.getElementById("sGroups").textContent = r.stats.length;
+  document.getElementById("sGroups").textContent = twoF
+    ? `${S.fA.levels.length}×${S.fB.levels.length}` : r.stats.length;
   const ns = r.stats.map(s=>s.n);
-  document.getElementById("sDesign").textContent = ns.length
-    ? `n = ${ns.every(x=>x===ns[0]) ? ns[0] : ns.join("/")} wells` : "—";
+  document.getElementById("sDesign").textContent = twoF
+    ? (S.tw && S.tw.ok ? `${S.tw.N} wells in the model` : "—")
+    : (ns.length ? `n = ${ns.every(x=>x===ns[0]) ? ns[0] : ns.join("/")} wells` : "—");
   document.getElementById("ovNote").textContent = metricLabel();
 
   const om = document.getElementById("omni");
@@ -1134,6 +2776,85 @@ function refresh(){
     `<div class="warn${k==="bad"?" bad":""}"><b>${h}</b> ${b}</div>`).join("");
   syncSelectors();
 }
+function drawFactors(){
+  const render = (id, key) => {
+    const [fk, asgK, actK] = FKEY[key];
+    const F = S[fk], asg = S[asgK], act = S[actK];
+    const box = document.getElementById(id);
+    if(!box) return;
+    const isConc = S.mode === "dose" && key === "B";
+    box.innerHTML = F.levels.length ? F.levels.map((L,i)=>{
+      const n = [...asg.values()].filter(v=>v===i).length;
+      // In dose mode, show what the concentration was actually read AS. The
+      // whole class of "it didn't recognise my value" problems is invisible
+      // parsing, so make the parse visible.
+      let read = "";
+      if(isConc){
+        const c = concOf(L);
+        read = isFinite(c)
+          ? `<span class="read" title="read as ${c}">= ${trimNum(c)}${
+              S.unit?" "+S.unit:""}</span>`
+          : `<span class="read bad" title="no number found in this level">not a number</span>`;
+      }
+      return `<div class="lv${i===act?" active":""}" data-lv="${key}:${i}">
+        <span class="sw" style="background:${gColor(i)}"></span>
+        <input class="nm" data-lvnm="${key}:${i}" value="${escapeHtml(L)}">
+        ${read}<span class="ct">${n}</span>
+        <button class="rm" data-lvrm="${key}:${i}" title="remove this level">×</button>
+      </div>`;
+    }).join("") : `<div class="hint" style="margin-top:5px">No levels yet — press
+      <b>+ level</b>, or build them from a column above.</div>`;
+
+    box.querySelectorAll("[data-lv]").forEach(el=>{
+      el.onclick = e => { if(e.target.matches("input,button")) return;
+        const [k,i] = el.dataset.lv.split(":"); S[FKEY[k][2]] = +i; refresh(); };
+    });
+    box.querySelectorAll("[data-lvnm]").forEach(inp=>{
+      inp.onclick = e => e.stopPropagation();
+      inp.onchange = () => { const [k,i] = inp.dataset.lvnm.split(":");
+        if(renameLevel(k, +i, inp.value)) refresh();
+        else inp.select();          // leave the text so it can be corrected
+      };
+    });
+    box.querySelectorAll("[data-lvrm]").forEach(b=>{
+      b.onclick = e => { e.stopPropagation();
+        const [k,i] = b.dataset.lvrm.split(":"); removeLevel(k, +i); refresh(); };
+    });
+  };
+  render("levA", "A"); render("levB", "B");
+
+  for(const [id,key] of [["nameA","fA"],["nameB","fB"]]){
+    const el = document.getElementById(id);
+    if(el && document.activeElement !== el) el.value = S[key].name;
+  }
+  const dose = S.mode === "dose";
+  const kA = document.getElementById("keyA"), kB = document.getElementById("keyB");
+  if(kA) kA.textContent = dose ? "compound" : "A";
+  if(kB) kB.textContent = dose ? "conc." : "B";
+  const cA = document.getElementById("colA"), cB = document.getElementById("colB");
+  if(cA) cA.title = dose ? "which column names the compound" : "build the levels from a metadata column";
+  if(cB) cB.title = dose ? "which column holds the numeric concentration" : "build the levels from a metadata column";
+  drawRoles();
+
+  const h = document.getElementById("twoHint");
+  if(h){
+    if(!S.fA.levels.length || !S.fB.levels.length){
+      h.innerHTML = "Give each factor at least two levels, then click wells to assign them.";
+    } else {
+      const rows = twoWayRows();
+      const miss = S.wells.length - rows.length;
+      const what = S.paint === "AB"
+        ? `<b style="color:${gColor(S.actA)}">${escapeHtml(S.fA.levels[S.actA] ?? "–")}</b> and `+
+          `<b style="color:${gColor(S.actB)}">${escapeHtml(S.fB.levels[S.actB] ?? "–")}</b>`
+        : S.paint === "A"
+        ? `<b style="color:${gColor(S.actA)}">${escapeHtml(S.fA.levels[S.actA] ?? "–")}</b> only`
+        : `<b style="color:${gColor(S.actB)}">${escapeHtml(S.fB.levels[S.actB] ?? "–")}</b> only`;
+      h.innerHTML = `Clicking a well sets ${what}.` +
+        (miss ? ` ${miss} well${miss===1?"":"s"} still missing a level — excluded from the model.` : "");
+    }
+  }
+}
+
 function drawGroups(){
   const box = document.getElementById("groups");
   box.innerHTML = S.groups.map((g,i)=>{
@@ -1171,7 +2892,19 @@ function drawGroups(){
         escapeHtml(S.groups[S.active].name)}</b>. Click again to unassign.`
     : "Add a condition first, then click wells to assign them.";
 }
+function syncControls(){
+  for(const [id,key] of [["ctrlNeg","ctrlNeg"],["ctrlPos","ctrlPos"]]){
+    const el = document.getElementById(id); if(!el) continue;
+    const cur = S[key];
+    el.innerHTML = `<option value="">— ${id==="ctrlNeg"?"negative":"positive"} control —</option>` +
+      S.groups.map(g=>`<option value="${escapeHtml(g.name)}">${escapeHtml(g.name)}</option>`).join("");
+    S[key] = S.groups.some(g=>g.name===cur) ? cur : "";
+    el.value = S[key];
+    el.onchange = () => { S[key] = el.value; refresh(); };
+  }
+}
 function syncSelectors(){
+  syncControls();
   const ref = document.getElementById("ref");
   const cur = S.ref;
   ref.innerHTML = S.groups.map((g,i)=>
@@ -1182,7 +2915,14 @@ function syncSelectors(){
 /* ---------- export ---------------------------------------- */
 function exportReport(){
   const r = S.result;
-  if(!r || !r.stats.length) return;
+  // Dose and two-factor modes don't populate the one-factor condition list, so
+  // gating the whole export on it silently produced nothing.
+  const haveDose = S.mode === "dose" && S.dr && S.dr.ok;
+  const haveTwo  = S.mode === "two"  && S.tw && S.tw.ok;
+  if(!r || (!r.stats.length && !haveDose && !haveTwo)){
+    errToast("Nothing to export yet — assign some wells first.");
+    return;
+  }
   const L = [];
   const q = s => `"${String(s).replace(/"/g,'""')}"`;
   L.push("# Condition Explorer report");
@@ -1194,9 +2934,10 @@ function exportReport(){
   L.push(`# multiple-comparison correction,${q(S.corr)}`);
   L.push(`# exported,${new Date().toISOString()}`);
   L.push("");
-  L.push("## per condition");
-  L.push(["condition","n_wells","n_cells","mean","sd","sem","ci_lo","ci_hi",
-          "median","min","max","wells"].join(","));
+  if(r.stats.length) L.push("## per condition");
+  if(r.stats.length)
+    L.push(["condition","n_wells","n_cells","mean","sd","sem","ci_lo","ci_hi",
+            "median","min","max","wells"].join(","));
   for(const s of r.stats)
     L.push([q(s.name), s.n, s.wells.reduce((a,w)=>a+(wellN(w)||0),0),
       s.mean, s.sd, s.sem, s.lo, s.hi, s.median, s.min, s.max,
@@ -1209,19 +2950,66 @@ function exportReport(){
     L.push([q(o.name), o.H ?? o.F, o.df ?? o.df1, o.df2 ?? "", o.p].join(","));
     L.push("");
   }
+  if(S.mode === "dose" && S.dr && S.dr.ok){
+    L.push("## dose-response (four-parameter logistic)");
+    L.push(`# normalisation,${q(S.norm)},constraint,${q(S.constrain)}`);
+    L.push(`# compound factor,${q(S.fA.name)},concentration factor,${q(S.fB.name)},unit,${q(S.unit||"none")}`);
+    // µ is not ASCII; stripping it turned "µM" into "M", i.e. molar. Use the
+    // conventional ASCII spelling instead.
+    const u = S.unit
+      ? "_" + S.unit.replace(/[µμ]/g,"u").replace(/\//g,"_per_").replace(/[^A-Za-z0-9_]/g,"")
+      : "";
+    if(S.split) L.push(`# cells split by,${q(S.split)}`);
+    L.push(["compound", ...(S.dr.subs?["population"]:[]),
+            "n_wells","n_doses","ic50"+u,"ci_lo"+u,"ci_hi"+u,"direction",
+            "hill","top","bottom","r2","extrapolated","conc_min"+u,"conc_max"+u].join(","));
+    for(const c of S.dr.compounds){
+      const f = c.fit;
+      const pre = [q(c.name), ...(S.dr.subs?[q(String(c.sub))]:[])];
+      if(!f.ok){ L.push([...pre, c.pts.length, "", "", "", "", "", "", "", "", "", "", "", ""].join(",")); continue; }
+      L.push([...pre, c.pts.length, f.nDoses, f.ic50, f.ic50Lo ?? "", f.ic50Hi ?? "",
+              f.direction, f.hill, f.top, f.bottom, f.r2, f.extrapolated ? 1 : 0,
+              f.concMin, f.concMax].join(","));
+    }
+    L.push("");
+  }
+  const aq = assayQuality();
+  if(aq && !aq.tooFew){
+    L.push("## assay quality");
+    L.push("metric,value");
+    L.push(`positive control,${q(aq.pos.name)}`);
+    L.push(`negative control,${q(aq.neg.name)}`);
+    L.push(`z_prime,${aq.z}`);
+    L.push(`ssmd,${aq.ssmd}`);
+    L.push(`signal_window,${aq.window}`);
+    L.push(`signal_background,${aq.sb}`);
+    L.push(`cv_positive_pct,${aq.cvPos}`);
+    L.push(`cv_negative_pct,${aq.cvNeg}`);
+    L.push("");
+  }
+  if(r.pairs.length){
   L.push("## pairwise");
   L.push(["group_a","group_b","difference","diff_ci_lo","diff_ci_hi",
           "hedges_g","g_ci_lo","g_ci_hi","statistic","df","p","p_adjusted"].join(","));
   for(const p of r.pairs)
     L.push([q(p.a.name), q(p.b.name), p.diff, p.lo, p.hi, p.g, p.gLo, p.gHi,
             p.stat, p.df ?? "", p.p, p.padj].join(","));
-  L.push("");
+  L.push(""); }
   L.push("## wells");
-  L.push(["well","condition","n_cells","value"].join(","));
+  const twoF = S.mode === "two" || S.mode === "dose";
+  L.push(twoF ? ["well",q(S.fA.name),q(S.fB.name),"n_cells","value"].join(",")
+              : ["well","condition","n_cells","value"].join(","));
   for(const w of S.wells){
-    const gi = S.assign.get(w);
-    if(gi === undefined) continue;
-    L.push([w, q(S.groups[gi].name), wellN(w), wellValue(w)].join(","));
+    if(twoF){
+      const a = S.asgA.get(w), b = S.asgB.get(w);
+      if(a === undefined && b === undefined) continue;
+      L.push([w, q(a===undefined?"":S.fA.levels[a]), q(b===undefined?"":S.fB.levels[b]),
+              wellN(w), wellValue(w)].join(","));
+    } else {
+      const gi = S.assign.get(w);
+      if(gi === undefined) continue;
+      L.push([w, q(S.groups[gi].name), wellN(w), wellValue(w)].join(","));
+    }
   }
   const blob = new Blob([L.join("\n")], {type:"text/csv"});
   const a = document.createElement("a");
@@ -1266,18 +3054,86 @@ async function load(file){
     errEl.textContent = e.message || String(e); console.error(e);
   }finally{ busy(false); }
 }
-function buildUI(){
+/** The selectivity list must exclude whatever is currently the primary
+ *  readout, so it has to be rebuilt when that changes. */
+function buildSplitOptions(){
+  const el = document.getElementById("split");
+  if(!el) return;
+  const cand = splitCandidates();
+  const keep = S.split;
+  el.innerHTML = `<option value="">— whole well (no split) —</option>` +
+    cand.map(([k,l])=>`<option value="${k}">${escapeHtml(l)}</option>`).join("");
+  S.split = cand.some(c=>c[0]===keep) ? keep : "";
+  el.value = S.split;
+  el.disabled = !cand.length;
+  el.onchange = () => { S.split = el.value; refresh(); };
+}
+function drawSplitHint(){
+  const h = document.getElementById("splitHint");
+  if(!h) return;
+  if(S.kind !== "cell"){
+    h.innerHTML = `<span style="color:var(--warn)">Needs a per-nucleus file.</span>
+      A per-well summary has already averaged the populations together, so they
+      cannot be separated again here.`;
+    return;
+  }
+  if(!S.split){
+    h.innerHTML = `Off — one curve per compound, from the whole well.
+      Split to fit a separate curve to each cell population and test whether
+      they respond at different doses.`;
+    return;
+  }
+  const subs = splitLevels();
+  const m = S.metrics.find(x=>x.key===S.metric);
+  const advice = (m && (m.agg === "count" || m.agg === "fracOfWell"))
+    ? ""
+    : `<br><span style="color:var(--warn)">With “${escapeHtml(m?m.label:"")}” as the
+       readout, check this is meaningful within a subpopulation — <b>cells per well</b>
+       or <b>% of well</b> are usually what you want when comparing populations.`;
+  h.innerHTML = `Fitting <b>${S.fA.levels.length * subs.length}</b> curves:
+    ${subs.length} populations (${subs.map(escapeHtml).join(", ")}) × ${
+    S.fA.levels.length} compounds.${advice}`;
+}
+
+function buildSiOptions(){
+  const siSel = document.getElementById("si");
+  if(!siSel) return;
+  const keep = S.si;
+  siSel.innerHTML = `<option value="">— none —</option>` + S.metrics
+    .filter(m => m.key !== S.metric)
+    .map(m=>`<option value="${m.key}">${escapeHtml(m.label)}</option>`).join("");
+  S.si = [...siSel.options].some(o=>o.value === keep) ? keep : "";
+  siSel.value = S.si;
+  siSel.onchange = () => { S.si = siSel.value; refresh(); };
+}
+
+/** Repopulate the readout dropdown from S.metrics, keeping the current choice
+ *  if it still exists. Needed whenever the metric list changes, not only on
+ *  load — otherwise a marker switched off upstream lingers in the list. */
+function buildMetricOptions(){
   const m = document.getElementById("metric");
+  if(!m) return;
+  const keep = S.metric;
   m.innerHTML = S.metrics.map(x=>
     `<option value="${x.key}">${escapeHtml(x.label)}</option>`).join("");
+  S.metric = S.metrics.some(x => x.key === keep) ? keep
+           : (S.metrics[0] ? S.metrics[0].key : null);
   m.value = S.metric;
-  m.onchange = () => { S.metric = m.value; refresh(); };
+  m.onchange = () => { S.metric = m.value; buildSiOptions(); refresh(); };
+}
+
+function buildUI(){
+  buildMetricOptions();
 
   // columns that look like condition labels: metadata, or anything with a
   // small number of repeated values across wells
   const cand = [];
   for(const c of S.header){
-    if(["well","plate","field","image_id","label"].includes(c)) continue;
+    // positional and bookkeeping columns describe where a well is, not what
+    // was done to it, so they must never be offered as a condition
+    if(["well","plate","field","image_id","label","well_row","well_col",
+        "n_cells","area"].includes(c)) continue;
+    if(/^n_cells/.test(c)) continue;
     const vals = new Set();
     for(const w of S.wells) vals.add(String(S.cols[c][S.wellRows.get(w)[0]]));
     if(vals.size >= 2 && vals.size <= Math.max(2, Math.min(12, S.wells.length/2)))
@@ -1290,6 +3146,17 @@ function buildUI(){
     `<option value="${c}">${escapeHtml(c)} (${n} values)</option>`).join("");
   if(cand.length) ac.value = cand[0][0];
   ac.onchange = () => { if(ac.value){ autoGroup(ac.value); refresh(); } };
+
+  const opts = `<option value="">— pick a column —</option>` + cand.map(([c,n])=>
+    `<option value="${c}">${escapeHtml(c)} (${n} levels)</option>`).join("");
+  buildSiOptions();
+  buildSplitOptions();
+  const cA = document.getElementById("colA"), cB = document.getElementById("colB");
+  cA.innerHTML = opts; cB.innerHTML = opts;
+  if(cand.length >= 2){ cA.value = cand[0][0]; cB.value = cand[1][0]; }
+  S.mode = "one"; document.getElementById("mode").value = "one";
+  S.fA = { name:"Factor A", levels:[] }; S.fB = { name:"Factor B", levels:[] };
+  S.asgA = new Map(); S.asgB = new Map();
 
   const pl = document.getElementById("plateName");
   pl.textContent = S.plates.length > 1 ? S.plate + ` (1 of ${S.plates.length})` : S.plate;
@@ -1306,6 +3173,62 @@ document.addEventListener("dragleave", ev=>{ if(ev.relatedTarget===null) dz.clas
 document.addEventListener("drop", ev=>{ ev.preventDefault(); dz.classList.remove("hot");
   const f = ev.dataTransfer.files[0]; if(f) load(f); });
 
+document.getElementById("mode").onchange = e => {
+  S.mode = e.target.value;
+  if((S.mode === "two" || S.mode === "dose") && !S.fA.levels.length){
+    const A = document.getElementById("colA").value, B = document.getElementById("colB").value;
+    if(A && B && A !== B){ autoGroup2(A, B); if(S.mode === "dose") S.unit = guessUnit(B); }
+    else {
+      // no metadata to build from: seed two empty levels each so the
+      // manual controls are immediately usable
+      S.fA = { name: S.mode === "dose" ? "Compound" : "Factor A", levels:["A1","A2"] };
+      S.fB = { name: S.mode === "dose" ? "Concentration" : "Factor B",
+               levels: S.mode === "dose" ? ["0","0.1","1","10"] : ["0","1"] };
+      S.asgA = new Map(); S.asgB = new Map(); S.actA = 0; S.actB = 0;
+    }
+  }
+  refresh(); };
+document.querySelectorAll("[data-addlev]").forEach(b=>{
+  b.onclick = () => { addLevel(b.dataset.addlev); refresh(); };
+});
+for(const [id,key] of [["nameA","fA"],["nameB","fB"]]){
+  const el = document.getElementById(id);
+  if(el) el.onchange = () => { S[key].name = el.value.trim() ||
+    (key === "fA" ? "Factor A" : "Factor B"); refresh(); };
+}
+document.getElementById("swapF").onclick = () => {
+  // the interaction plot puts factor A on the x axis, so swapping is the
+  // quickest way to put the ordered factor (dose, time) where it reads best
+  [S.fA, S.fB] = [S.fB, S.fA];
+  [S.asgA, S.asgB] = [S.asgB, S.asgA];
+  [S.actA, S.actB] = [S.actB, S.actA];
+  buildSiOptions();
+  buildSplitOptions();
+  const cA = document.getElementById("colA"), cB = document.getElementById("colB");
+  [cA.value, cB.value] = [cB.value, cA.value];
+  if(S.mode === "dose" && cB.value){ S.unit = guessUnit(cB.value); syncUnit(); }
+  refresh(); };
+document.getElementById("clearF") && (document.getElementById("clearF").onclick = () => {
+  clearFactor("A"); clearFactor("B"); refresh(); });
+document.getElementById("ssType").onchange = e => { S.ssType = +e.target.value; refresh(); };
+document.getElementById("norm").onchange = e => { S.norm = e.target.value; refresh(); };
+document.getElementById("constrain").onchange = e => { S.constrain = e.target.value; refresh(); };
+document.getElementById("paint").onchange = e => { S.paint = e.target.value; refresh(); };
+for(const id of ["colA","colB"]) document.getElementById(id).onchange = () => {
+  const A = document.getElementById("colA").value, B = document.getElementById("colB").value;
+  if(A && B && A !== B){
+    autoGroup2(A, B);
+    if(S.mode === "dose"){ S.unit = guessUnit(B); syncUnit(); }
+    refresh();
+  } else errToast("Pick two different columns for the two factors.");
+};
+function syncUnit(){
+  const el = document.getElementById("unit");
+  if(!el) return;
+  if(![...el.options].some(o=>o.value === S.unit)) S.unit = "µM";
+  el.value = S.unit;
+}
+document.getElementById("unit").onchange = e => { S.unit = e.target.value; refresh(); };
 document.getElementById("addGrp").onclick = () => { addGroup(); refresh(); };
 document.getElementById("bClear").onclick = () => {
   S.groups = []; S.assign = new Map(); S.active = 0; S.ref = 0; refresh(); };
@@ -1331,6 +3254,14 @@ let rt; addEventListener("resize", ()=>{ clearTimeout(rt); rt = setTimeout(()=>{
 
 if(window.EMBEDDED_CSV)
   load(new File([window.EMBEDDED_CSV], window.EMBEDDED_NAME || "embedded.csv"));
+
+
+
+
+
+
+
+
 
 </script>
 </body>
