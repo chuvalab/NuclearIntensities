@@ -19,9 +19,10 @@ gate you drag in tab 1 changes the IC50s in tab 2.
 """
 import re, pathlib, sys
 
-SRC_G = pathlib.Path("/mnt/user-data/outputs/gating_explorer.html")
-SRC_C = pathlib.Path("/mnt/user-data/outputs/condition_explorer.html")
-OUT   = pathlib.Path("/home/claude/nucleoflow_workbench.html")
+HERE  = pathlib.Path(__file__).resolve().parent      # run it from anywhere
+SRC_G = HERE / "gating_explorer.html"
+SRC_C = HERE / "condition_explorer.html"
+OUT   = HERE / "nucleoflow_workbench.html"
 
 
 # ---------------------------------------------------------------- parsing
@@ -153,7 +154,7 @@ def main():
 """
     tail_c = """
   window.NF_COND = {
-    S, refresh, parseCSV,
+    S, refresh, parseCSV, readTable,
     initFrom(parsed, name){
       S.name = name; S.header = parsed.header; S.cols = parsed.cols; S.rows = parsed.rows;
       S.groups = []; S.assign = new Map(); S.active = 0; S.ref = 0;
@@ -319,7 +320,7 @@ button,input,select{{font:inherit;color:inherit}}
 "use strict";
 const WB = {{ parsed:null, name:"", kind:"", tab:"gate" }};
 const $ = id => document.getElementById(id);
-const busy = on => $("wbBusy").classList.toggle("on", on);
+const busy = on => {{ $("wbBusy").textContent = "reading…"; $("wbBusy").classList.toggle("on", on); }};
 let noteTimer = null;
 function note(html, ms = 6000){{
   const el = $("wbNote"); el.innerHTML = html; el.classList.add("show");
@@ -374,50 +375,46 @@ function applyGates(quiet){{
       dropped.push(m);
     }}
   }}
-  // population / combination, over the ACTIVE markers only
+  // population / combination, over the ACTIVE markers only. Labels are
+  // built once per on/off pattern (2^markers of them), not once per cell.
   const POP = ["negative","single","double","triple","quadruple","quintuple"];
+  const nPat = 1 << on.length, popOf = new Array(nPat), comboOf = new Array(nPat);
+  for(let b=0;b<nPat;b++){{
+    const names = on.filter((m,k) => b & (1<<k));
+    popOf[b] = POP[names.length] || (names.length+"-positive");
+    comboOf[b] = names.length ? names.join("+")+"+" : "all-negative";
+  }}
   const popCol = new Array(S.rows).fill("");
   const comboCol = new Array(S.rows).fill("");
   for(let j=0;j<act.length;j++){{
     const i = act[j];
-    let n = 0, names = [];
-    for(let k=0;k<on.length;k++) if(pos[k][i]){{ n++; names.push(on[k]); }}
-    popCol[i] = POP[n] || (n+"-positive");
-    comboCol[i] = names.length ? names.join("+")+"+" : "all-negative";
+    let b = 0;
+    for(let k=0;k<on.length;k++) if(pos[k][i]) b |= 1<<k;
+    popCol[i] = popOf[b]; comboCol[i] = comboOf[b];
   }}
   add("population", popCol); add("combination", comboCol);
-  // foci positivity, if the gating tab computed any
-  for(const c of header.filter(h => h.startsWith("foci_n_"))){{
-    const ch = c.slice(7), a = new Float64Array(S.rows), v = cols[c];
-    for(let j=0;j<act.length;j++){{ const i = act[j]; a[i] = v[i] >= S.foci_min_count_hint ? 1 : 0; }}
-  }}
-  // The cell filter carries across. A cell the gating tab threw out as debris
-  // or a dying nucleus must not sit in the analysis tab's denominator: it would
-  // silently drag every population percentage below 100.
-  if(S.qcKeep){{
-    const d = new Float64Array(S.rows);
-    for(let i=0;i<S.rows;i++) d[i] = S.qcKeep[i] ? 0 : 1;
-    add("excluded_by_filter", d);
-    C.S.excludeCol = "excluded_by_filter";
-  }} else {{
-    C.S.excludeCol = "";
-    if("excluded_by_filter" in cols){{
-      delete cols["excluded_by_filter"];
-      const at = header.indexOf("excluded_by_filter");
-      if(at >= 0) header.splice(at, 1);
-    }}
-  }}
-  // cells outside the gating tab's active set are unclassified; drop them too
-  // rather than leaving them to dilute the percentages
+  // One exclusion column covers both reasons a cell leaves the analysis:
+  //  - the gating tab's cell filter threw it out (debris, dying nuclei), and
+  //  - it lies outside the gating tab's active set, so it was never classified.
+  // Either way it must not sit in the denominator, or every population
+  // percentage silently drops below 100.
   {{
-    const un = new Float64Array(S.rows);
-    let anyUn = false;
     const inAct = new Uint8Array(S.rows);
     for(let j=0;j<act.length;j++) inAct[act[j]] = 1;
-    for(let i=0;i<S.rows;i++) if(!inAct[i]){{ un[i] = 1; anyUn = true; }}
-    if(anyUn){{
-      add("excluded_by_filter", un);
+    const ex = new Float64Array(S.rows);
+    let any = false;
+    for(let i=0;i<S.rows;i++)
+      if(!inAct[i] || (S.qcKeep && !S.qcKeep[i])){{ ex[i] = 1; any = true; }}
+    if(any){{
+      add("excluded_by_filter", ex);
       C.S.excludeCol = "excluded_by_filter";
+    }} else {{
+      C.S.excludeCol = "";
+      if("excluded_by_filter" in cols){{
+        delete cols["excluded_by_filter"];
+        const at = header.indexOf("excluded_by_filter");
+        if(at >= 0) header.splice(at, 1);
+      }}
     }}
   }}
   // the analysis tab hides readouts and splits for markers that are off
@@ -437,19 +434,13 @@ async function loadFile(file){{
   $("wbErr").textContent = ""; busy(true);
   await new Promise(r=>setTimeout(r,30));
   try{{
-    const buf = await file.arrayBuffer();
-    const head = new Uint8Array(buf,0,2);
-    const gz = file.name.toLowerCase().endsWith(".gz") || (head[0]===0x1f && head[1]===0x8b);
-    let text;
-    if(gz){{
-      if(typeof pako === "undefined") throw new Error(
-        "This file is gzipped and the decompressor didn't load (no internet?). "+
-        "Use a plain .csv, or unzip it first.");
-      text = pako.inflate(new Uint8Array(buf), {{to:"string"}});
-    }} else text = new TextDecoder().decode(buf);
-
-    // both panes share these columns, so parse once with the wider type
-    const parsed = window.NF_COND.parseCSV(text);
+    // Streamed: the file is never held as one string, so multi-GB tables
+    // work (a single string over ~512 MB silently comes back empty).
+    // Both panes share these columns, so it is parsed exactly once.
+    const parsed = await window.NF_COND.readTable(file, (f, rows) => {{
+      $("wbBusy").textContent = `reading… ${{Math.round(100*f)}}%  ·  ${{rows.toLocaleString()}} rows`; }});
+    $("wbBusy").textContent = `setting up ${{parsed.rows.toLocaleString()}} nuclei…`;
+    await new Promise(r=>setTimeout(r,20));
     WB.parsed = parsed; WB.name = file.name;
     const perCell = parsed.header.some(c => /^(mean|median|integrated)_/.test(c))
                  && !parsed.header.includes("n_cells");
@@ -469,6 +460,10 @@ async function loadFile(file){{
     $("wbDrop").classList.add("hide");
     showTab(gateOK ? "gate" : "cond");
     if(gateOK){{ applyGates(true); markerSig = (window.NF_GATE.S.markersOn||[]).join("|"); }}
+    else if(perCell) note("<b>Nuclei only.</b> This file has no marker channel besides "+
+      "the nuclear stain, so there is nothing to gate and the gating tab is off. "+
+      "The analysis tab compares <b>cells per well</b>, nuclear size and DNA content "+
+      "between conditions.", 9000);
     else note("<b>Loaded a per-well summary.</b> The gating tab needs per-nucleus "+
       "data, so it is disabled — the analysis tab has everything it needs.", 8000);
   }}catch(e){{

@@ -20,6 +20,8 @@ Both tabs work on the **same cells**, so a gate you move on tab 1 changes the
 IC50s on tab 2. That link is the point: splitting a dose-response by cell
 population needs a positivity call for every cell, and tab 1 is where those come
 from. Nothing leaves your computer — the browser reads the file locally.
+Plain `.csv` and `.csv.gz` both work, at full-plate size (tested at 1.7 million
+nuclei); the file is streamed, so its size is no limit — only your RAM is.
 
 If you are handing one thing to a student, hand them this. See
 [`WORKBENCH_GUIDE.md`](WORKBENCH_GUIDE.md).
@@ -686,7 +688,7 @@ results/
 │   │   ├── panel_index.csv             all panels in one table
 │   │   └── GFP_RFP/                    per-panel summaries + plots, summing to 100%
 │   ├── per_<key>_summary.csv           one row per condition (--group-by)
-│   ├── well_metadata.csv               the OMERO key-value pairs, per well
+│   ├── well_metadata.csv               every well imaged: fields imaged + OMERO key-value pairs
 │   ├── per_image_summary.csv           one row per field    (QC)
 │   ├── thresholds.json                 the cutoffs actually applied
 │   └── plots/
@@ -811,8 +813,10 @@ Three things worth knowing:
 
 Performance: a 96-well plate at 250,000 nuclei parses in about a second and
 holds ~60 fps while a gate is dragged, with the biaxial plots, histograms,
-population bars and quadrant statistics all updating. Roughly a million nuclei
-is the practical ceiling.
+population bars and quadrant statistics all updating. Files are read as a
+stream, so size itself is no limit: a 384-well plate of 1.7 million nuclei
+(850 MB of CSV) loads in about 20 seconds. The ceiling is the computer's RAM —
+roughly 1 GB free per 2 million nuclei.
 
 `EXPLORER_GUIDE.md` is written for students, and includes a section on the ways
 interactive gating invites you to fool yourself.
@@ -986,6 +990,61 @@ colour map from the percentage maps so the two are not confused at a glance.
 
 The per-well and per-image summary CSVs carry both: `pct_double` alongside
 `n_double`, `pct_GFP_positive` alongside `n_GFP_positive`, and `n_cells`.
+
+### DAPI-only plates: a nuclei counter
+
+If the images contain only the nuclear stain, there is nothing to gate — but a
+plate of nuclei is still a viability and proliferation readout. The script
+detects this on its own (no flag needed), logs
+
+```
+[Plate1] DAPI only - no marker channel to gate. Running as a nuclei counter
+```
+
+and writes the usual files without the gating parts:
+
+| File | What is in it |
+|---|---|
+| `per_well_summary.csv` | `n_cells`, `n_fields`, `cells_per_field`, mean/median nuclear area, median DAPI intensity, median integrated DAPI, mean solidity and eccentricity, and the `kv_` metadata columns |
+| `per_image_summary.csv` | the same, per field — for spotting one bad field in a well |
+| `per_nucleus_measurements.csv.gz` | every nucleus, as for a marker run |
+| `per_<group>_summary.csv` | with `--group-by`: wells, total cells, mean and SD of cells per well per condition |
+| `plots/platemap_n_cells.png` | cells per well on the plate layout |
+| `plots/platemap_cells_per_field.png` | the same, corrected for wells imaged with fewer fields |
+| `plots/platemap_mean_nuclear_area.png` | swelling, shrinkage, condensation |
+| `plots/cells_per_well.png` | one bar per well, with the plate median |
+| `plots/cells_per_well_by_<group>.png` | with `--group-by`: one dot per well, per condition |
+| `plots/nuclear_profile.png` | nuclear area, DNA content (integrated DAPI) and DAPI intensity across the plate |
+
+The DNA-content histogram is worth a look: healthy cycling cells give a 2N peak
+and a smaller 4N peak at twice the value, and a shift between them is a quick
+hint of cell-cycle arrest.
+
+`--filter-dead` works as usual, because it only needs DAPI. With
+`--dead-action flag`, the summary also gets `n_dead` and `n_live`, so you can
+count live nuclei while keeping the dying ones visible. With `--export-explorer`
+the workbench opens straight on the analysis tab, and *cells per well* is the
+default readout (the gating tab is switched off, since there is nothing to gate).
+
+**Empty wells count as zero.** A compound that kills everything leaves fields
+with no nuclei, and those leave no row in the per-nucleus table. The script
+therefore records every field it imaged in `well_metadata.csv`
+(`n_fields_imaged`), and the counter reports a well with no nuclei as
+`n_cells = 0` (with its `kv_` labels) instead of silently dropping it — which
+would otherwise make that condition look *less* toxic than it is. The log
+lists such wells. `--from-csv` picks up the `well_metadata.csv` sitting next to
+the input table; without it, empty wells cannot be told apart from wells that
+were never imaged, and the log says so.
+
+For the same reason, when comparing cell counts between conditions in the
+browser, load **`per_well_summary.csv`** (which has the zeros) rather than the
+per-nucleus table (which cannot contain a well with no nuclei).
+
+**Cells per field versus cells per well.** If every well was imaged with the
+same number of fields, the two give the same comparison. If some fields were
+skipped (out of focus, or `--max-fields`), use `cells_per_field`: a well with
+6 of 9 fields is not a well with a third fewer cells. Fields are counted as
+imaged whether or not they held nuclei.
 
 ### OMERO key-value pairs: your experimental metadata
 
@@ -1884,3 +1943,42 @@ files afterwards — they have identical columns, so in pandas:
 | parquet | A compressed table format; smaller and much faster than CSV |
 | CLI flag | The `--something` options you type after the script name |
 
+
+---
+
+## Setting up the repository
+
+If you're the one publishing this, GitHub's **topics** are how people find a
+tool like this — they're indexed by GitHub search and by the topic pages, in a
+way that README text is not.
+
+**In the browser:** open the repository, click the **⚙ gear** next to *About* on
+the right-hand side, and fill in the *Description*, *Website* and *Topics*
+fields. Topics are lowercase, hyphen-separated, and you can have up to 20.
+
+**From the command line**, with the [GitHub CLI](https://cli.github.com):
+
+```bash
+gh repo edit --add-topic omero,high-content-screening,microscopy,image-analysis
+gh repo edit --add-topic image-cytometry,cell-segmentation,stardist,cellpose
+gh repo edit --add-topic flow-cytometry,gating,high-throughput-screening
+gh repo edit --add-topic bioimage-analysis,python,imagexpress
+gh repo edit --description "Flow-cytometry-style analysis of high-content microscopy: nuclear segmentation, multi-marker gating and foci counting, straight from OMERO"
+```
+
+(`--add-topic` takes a comma-separated list and can be repeated; splitting it
+across a few lines just keeps it readable.)
+
+Two things worth doing at the same time:
+
+- **Point the *Website* field** at the raw `gating_explorer.html` if you host it
+  anywhere, or at the docs. If you enable GitHub Pages for the repository, the
+  two explorers work as-is from a Pages URL — they're plain static HTML with no
+  build step and no server, so students could use them without cloning anything.
+- **Add a `CITATION.cff`** if this ends up supporting a paper. GitHub renders a
+  "Cite this repository" button from it automatically.
+
+A note on licensing: the pipeline depends on StarDist and Cellpose, which carry
+their own licences (BSD-3-Clause with a non-commercial clause, and BSD-3-Clause
+respectively). Worth checking those before choosing yours, particularly if
+anyone downstream might want commercial use.

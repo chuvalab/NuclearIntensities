@@ -125,10 +125,20 @@ handing a single file to a student, hand them this one.
 
 - **One file at a time.** Both tabs share the one dataset. For several plates,
   run them one at a time, or split per plate with the Plate selector.
-- **Big per-nucleus files are slower here** than in the standalone gating tool,
-  because both apps hold the same columns and both redraw on tab switch. Around
-  a million nuclei is still workable; beyond that, gate in the standalone tool,
-  export, and analyse from the export.
+- **Big files are fine; memory is the real limit.** Files are read in a
+  stream, so there is no file-size ceiling as such. In testing, a full 384-well
+  plate of 1.7 million nuclei (850 MB as `.csv`, 400 MB as `.csv.gz`) loaded in
+  about 20 seconds, and *Apply gates* then took about half a second. What
+  eventually stops you is your computer's RAM: budget roughly 1 GB of free
+  memory per 2 million nuclei. If the browser runs out it now says so, and
+  how far it got, instead of failing silently — then load one plate at a time.
+- **`.csv.gz` works offline** in current Chrome, Edge, Firefox and Safari; the
+  browser unzips it itself. Older browsers fall back to a downloaded unzipper
+  and so need internet for gzipped files.
+- **"That file has no rows" on a big file** was a bug in earlier versions:
+  browsers cannot hold more than ~512 MB of text as one string and silently
+  returned nothing. If you still see it, you have an old copy of the workbench —
+  replace it with the current one.
 - **Applying gates is a deliberate action.** It runs once on load and then only
   when you press the button, so tab 2 never shifts under you while you are
   reading it. The flip side is that you must press it after changing a gate.

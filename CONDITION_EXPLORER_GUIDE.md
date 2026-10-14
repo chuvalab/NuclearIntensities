@@ -41,6 +41,25 @@ Any of these:
 Trailing `#` comment lines are ignored, so the Gating Explorer's export loads
 directly with its provenance intact.
 
+### Readouts: numbers or percentages
+
+The **Readout** list is grouped. With a per-nucleus file you get every
+population both ways:
+
+| Number of cells | Percentage of cells |
+|---|---|
+| cells per well | % of well in this population |
+| GFP-positive cells per well | % GFP positive |
+| double-positive cells per well | % double |
+| … one per marker and per class | … the same set |
+
+Plus the intensity and foci readouts, averaged per well. **Pick by question:**
+a percentage asks "did the *composition* of the well change?", a number asks
+"did these cells *survive* or *expand*?". A compound that kills everything
+equally leaves the percentages flat while every count drops, so for toxicity
+and IC50 work the counts are usually the honest readout. With a per-well
+summary the `n_…` columns appear under *Number of cells* the same way.
+
 ---
 
 ## One factor or two
@@ -256,7 +275,8 @@ active `pos_` columns rather than from the strings in the column, so a file
 carrying leftover class labels from an earlier analysis cannot reintroduce them.
 
 With three markers you therefore get `negative / single / double / triple`, and
-`% triple` also appears as a readout you can fit a curve to directly.
+`% triple` and *triple-positive cells per well* also appear as readouts you can
+fit a curve to directly.
 
 `population` splits by *how many* markers a cell is positive for, which is the
 usual way to ask "do double-positive cells respond differently?". `combination`

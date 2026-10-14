@@ -1688,12 +1688,112 @@ def write_table(df: pd.DataFrame, stem: Path, fmt: str) -> Optional[Path]:
     return p
 
 
+def nuclear_summary(df: pd.DataFrame, stat: str, by: Sequence[str]) -> pd.DataFrame:
+    """Per-group nuclear readouts for a DAPI-only plate: density, size, DNA.
+
+    With no marker to gate, these are what a plate of nuclei can tell you:
+    how many cells survived (n_cells, and per field so that wells imaged with a
+    different number of fields stay comparable), how big the nuclei are
+    (swelling, shrinkage, apoptotic condensation) and how much DNA they hold
+    (integrated DAPI, which separates 2N from 4N cells).
+    """
+    col, chan = dapi_column(df, stat)
+    integ = f"integrated_{chan}"
+    g = df.groupby(list(by), sort=False)
+    out = g.size().rename("n_cells").to_frame()
+    if "dead" in df.columns and df["dead"].any():   # --filter-dead, --dead-action flag
+        out["n_dead"] = g["dead"].sum().astype(int)
+        out["n_live"] = out["n_cells"] - out["n_dead"]
+    if "field" in df.columns and "field" not in by:
+        out["n_fields"] = g["field"].nunique()
+        out["cells_per_field"] = out["n_cells"] / out["n_fields"].replace(0, np.nan)
+    if "area" in df.columns:
+        out["mean_nuclear_area"] = g["area"].mean()
+        out["median_nuclear_area"] = g["area"].median()
+    if col in df.columns:
+        out[f"median_{chan}_intensity"] = g[col].median()     # of the per-nucleus {stat}
+    if integ in df.columns:
+        out[f"median_integrated_{chan}"] = g[integ].median()
+    for c in ("solidity", "eccentricity"):
+        if c in df.columns:
+            out[f"mean_{c}"] = g[c].mean()
+    return out.reset_index()
+
+
+def plot_cell_counts(per_well: pd.DataFrame, out: Path, title: str,
+                     by: Optional[str] = None):
+    """Cells per well as bars (plate order), or as wells-per-condition dots."""
+    if by is None or by not in per_well.columns:
+        pw = per_well.sort_values(["well_row", "well_col"]) \
+            if {"well_row", "well_col"} <= set(per_well.columns) else per_well
+        fig, ax = plt.subplots(figsize=(max(6, 0.18 * len(pw)), 3.8))
+        ax.bar(pw["well"].astype(str), pw["n_cells"], color="#4c78a8", width=0.8)
+        med = float(pw["n_cells"].median())
+        ax.axhline(med, color="crimson", lw=1, ls=":", label=f"median {med:.0f}")
+        ax.legend(frameon=False, fontsize=8)
+        ax.set_xlabel("well")
+        ax.tick_params(axis="x", rotation=90, labelsize=6 if len(pw) > 96 else 7)
+    else:
+        levels = list(pd.unique(per_well[by].astype(str)))
+        fig, ax = plt.subplots(figsize=(max(5, 0.7 * len(levels) + 2), 4.2))
+        rng = np.random.default_rng(0)
+        for i, lev in enumerate(levels):
+            v = per_well.loc[per_well[by].astype(str) == lev, "n_cells"].to_numpy()
+            ax.scatter(i + rng.uniform(-0.18, 0.18, len(v)), v, s=14,
+                       color="#4c78a8", alpha=0.8, lw=0)
+            if len(v):
+                ax.hlines(v.mean(), i - 0.3, i + 0.3, color="black", lw=1.6)
+        ax.set_xticks(range(len(levels)))
+        ax.set_xticklabels(levels, rotation=45, ha="right", fontsize=8)
+        ax.set_xlabel(by)
+    ax.set_ylabel("cells per well")
+    ax.set_ylim(bottom=0)
+    ax.set_title(title, fontsize=11)
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(out, dpi=160)
+    plt.close(fig)
+
+
+def plot_nuclear_profile(df: pd.DataFrame, stat: str, out: Path, title: str):
+    """Plate-level nuclear size and DNA-content (integrated DAPI) distributions."""
+    col, chan = dapi_column(df, stat)
+    panels = [(c, lab) for c, lab in [
+        ("area", "nuclear area (px)"),
+        (f"integrated_{chan}", f"integrated {chan}  (DNA content)"),
+        (col, f"{stat} {chan} intensity")] if c in df.columns]
+    if not panels:
+        return
+    fig, axes = plt.subplots(1, len(panels), figsize=(4.2 * len(panels), 3.4))
+    for ax, (c, lab) in zip(np.atleast_1d(axes), panels):
+        v = df[c].to_numpy(dtype=float)
+        v = v[np.isfinite(v) & (v > 0)]
+        if not len(v):
+            continue
+        lo, hi = np.quantile(v, [0.002, 0.998])
+        ax.hist(v[(v >= lo) & (v <= hi)], bins=120, color="#4c78a8")
+        ax.axvline(np.median(v), color="crimson", lw=1, ls=":")
+        ax.set_xlabel(lab, fontsize=9)
+        ax.set_ylabel("nuclei", fontsize=9)
+        ax.spines[["top", "right"]].set_visible(False)
+    fig.suptitle(title, fontsize=11)
+    fig.tight_layout()
+    fig.savefig(out, dpi=160)
+    plt.close(fig)
+
+
 def summarise(df: pd.DataFrame, markers: Sequence[str], by: Sequence[str]) -> pd.DataFrame:
     g = df.groupby(list(by), sort=False)
     out = g.size().rename("n_cells").to_frame()
     for m in markers:
         out[f"pct_{m}_positive"] = 100 * g[f"pos_{m}"].mean()
         out[f"n_{m}_positive"] = g[f"pos_{m}"].sum().astype(int)
+
+    if "population" not in df.columns:            # DAPI-only run: no marker calls
+        for chan in foci_channel_columns(df):
+            out[f"mean_foci_{chan}"] = g[f"foci_n_{chan}"].mean()
+            out[f"median_foci_{chan}"] = g[f"foci_n_{chan}"].median()
+        return out.reset_index()
 
     # how many markers (negative / single / double / ...), observed classes only
     seen = set(df["population"].unique())
@@ -1749,22 +1849,24 @@ def process_plate(conn, plate, cfg: Config, segmenter: Segmenter,
     if cfg.fetch_kv and "plate" in cfg.kv_levels:
         base_kv.update(map_annotations(plate))
     well_kv_cache: Dict[str, Dict[str, str]] = {}
-    well_meta_rows: List[Dict[str, str]] = []
+    # every well visited and every field actually segmented - including fields
+    # with zero nuclei, which leave no row in the nucleus table. Without this a
+    # well emptied by a toxic compound would vanish instead of counting as 0.
+    wells_seen: Dict[str, Tuple[int, int]] = {}
+    fields_done: Dict[str, set] = {}
     foci_params: Optional[FociParams] = None
     crops_done = 0
     chan_cache: Dict[int, List[str]] = {}
     strip_height = cfg.server_tile_height
 
     for label, row, col, fld, image, well in iter_images(plate, cfg):
+        wells_seen.setdefault(label, (row, col))
         try:
             if cfg.fetch_kv and label not in well_kv_cache:
                 wkv = dict(base_kv)
                 if "well" in cfg.kv_levels:
                     wkv.update(map_annotations(well))
                 well_kv_cache[label] = wkv
-                well_meta_rows.append({"plate": plate_name, "well": label,
-                                       "well_row": row, "well_col": col,
-                                       **kv_to_columns(wkv, cfg.kv_prefix)})
 
             # Channel metadata is identical across a plate; querying it once
             # per image is thousands of needless server round trips.
@@ -1788,6 +1890,7 @@ def process_plate(conn, plate, cfg: Config, segmenter: Segmenter,
                 stack = read_stack(image, cfg, tile_height=strip_height)
             labels = filter_labels(segmenter(stack[..., dapi_idx]), cfg)
             n = int(labels.max())
+            fields_done.setdefault(label, set()).add(fld)
             LOG.info("  %s field %d (image %d): %d nuclei", label, fld, image.getId(), n)
             if n == 0:
                 continue
@@ -1895,6 +1998,13 @@ def process_plate(conn, plate, cfg: Config, segmenter: Segmenter,
 
     nuclei = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
     foci = pd.concat(foci_rows, ignore_index=True) if foci_rows else pd.DataFrame()
+    well_meta_rows = []
+    for label, (row, col) in wells_seen.items():
+        r = {"plate": plate_name, "well": label, "well_row": row, "well_col": col,
+             "n_fields_imaged": len(fields_done.get(label, ()))}
+        if cfg.fetch_kv:
+            r.update(kv_to_columns(well_kv_cache.get(label, base_kv), cfg.kv_prefix))
+        well_meta_rows.append(r)
     well_meta = pd.DataFrame(well_meta_rows) if well_meta_rows else pd.DataFrame()
     if not nuclei.empty:
         nuclei = coerce_numeric_kv(nuclei, cfg.kv_prefix)
@@ -2033,14 +2143,19 @@ def analyse_subset(df: pd.DataFrame, subset: Sequence[str], cfg: Config,
 
 
 def analyse(df: pd.DataFrame, cfg: Config, outdir: Path, tag: str,
-            conn=None, omero_obj=None) -> pd.DataFrame:
+            conn=None, omero_obj=None,
+            well_meta: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     """Gate, summarise and plot one plate (or a pooled screen)."""
     stat = cfg.intensity_stat
     markers = detect_markers(df, stat, cfg)
-    if not markers:
-        LOG.warning("[%s] no marker channels besides DAPI - nothing to gate", tag)
-        return df
-    LOG.info("[%s] markers: %s", tag, ", ".join(markers))
+    count_only = not markers
+    if count_only:
+        # Nothing to gate - but a plate of nuclei is still a cell count, and the
+        # nuclear size and DNA content come for free from the segmentation.
+        LOG.info("[%s] DAPI only - no marker channel to gate. Running as a "
+                 "nuclei counter: cells per well, nuclear size, DNA content", tag)
+    else:
+        LOG.info("[%s] markers: %s", tag, ", ".join(markers))
 
     plots = outdir / "plots"
     plots.mkdir(parents=True, exist_ok=True)
@@ -2075,6 +2190,10 @@ def analyse(df: pd.DataFrame, cfg: Config, outdir: Path, tag: str,
                 LOG.warning("[%s] every cell was flagged as dead - check "
                             "--dead-k / --dead-method", tag)
                 return df
+
+    if count_only:
+        return _analyse_counts(df, cfg, outdir, tag, plots, dead_info,
+                               dead_per_well, conn, omero_obj, well_meta)
 
     df, thresholds = gate(df, markers, cfg, stat)
 
@@ -2273,6 +2392,134 @@ def analyse(df: pd.DataFrame, cfg: Config, outdir: Path, tag: str,
     if conn is not None and cfg.attach_results and omero_obj is not None:
         targets = [p for p in [cells_path, outdir / "per_well_summary.csv",
                                outdir / "thresholds.json"] if p is not None]
+        for p in targets + sorted(plots.glob("*.png")):
+            try:
+                attach_file(conn, omero_obj, p)
+            except Exception:                          # noqa: BLE001
+                LOG.exception("Could not attach %s", p)
+    return df
+
+
+def _analyse_counts(df: pd.DataFrame, cfg: Config, outdir: Path, tag: str,
+                    plots: Path, dead_info: Optional[Dict],
+                    dead_per_well: Optional[pd.DataFrame],
+                    conn=None, omero_obj=None,
+                    well_meta: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    """The DAPI-only branch of analyse(): a nuclei counter.
+
+    Writes the same files as a marker run (per-nucleus table, per-well and
+    per-image summaries, plate maps) minus everything that needs a gate.
+    """
+    stat = cfg.intensity_stat
+    per_well = nuclear_summary(df, stat, ["plate", "well", "well_row", "well_col"])
+    per_image = nuclear_summary(df, stat, ["plate", "well", "field", "image_id"])
+    foci_chans = foci_channel_columns(df)
+    if foci_chans:
+        extra = summarise(df, [], ["plate", "well", "well_row", "well_col"]) \
+            .drop(columns=["n_cells"])
+        per_well = per_well.merge(extra, on=["plate", "well", "well_row", "well_col"],
+                                  how="left")
+    # Wells and fields that were imaged but held no nuclei: they are real
+    # zeros, and leaving them out would inflate their condition's mean.
+    keys = ["plate", "well", "well_row", "well_col"]
+    have_meta = (well_meta is not None and not well_meta.empty
+                 and "n_fields_imaged" in well_meta.columns)
+    if have_meta:
+        wm = well_meta.copy()
+        wm["plate"] = wm["plate"].astype(str)
+        per_well["plate"] = per_well["plate"].astype(str)
+        per_well = wm[keys + ["n_fields_imaged"]].merge(per_well, on=keys, how="left")
+        for c in ("n_cells", "n_dead", "n_live"):
+            if c in per_well.columns:
+                per_well[c] = per_well[c].fillna(0).astype(int)
+        per_well["n_fields"] = per_well.pop("n_fields_imaged")
+        per_well["cells_per_field"] = per_well["n_cells"] / \
+            per_well["n_fields"].replace(0, np.nan)
+        empty = per_well.loc[per_well["n_cells"] == 0, "well"].tolist()
+        if empty:
+            LOG.warning("[%s] %d imaged well(s) with no nuclei at all, reported as "
+                        "0 cells: %s", tag, len(empty), ", ".join(empty[:20]) +
+                        (" ..." if len(empty) > 20 else ""))
+    else:
+        LOG.info("[%s] no well_metadata.csv with field counts - wells without "
+                 "any nuclei cannot be told apart from wells never imaged, and "
+                 "n_fields only counts fields that held nuclei", tag)
+
+    if dead_per_well is not None:
+        per_well = per_well.merge(dead_per_well, on=["plate", "well"], how="left")
+        plot_platemap(per_well, "pct_dead_dapi", plots / "platemap_pct_dead_dapi.png",
+                      f"{tag} - % dead/dying (bright DAPI)")
+
+    kv_cols = [c for c in df.columns if c.startswith(cfg.kv_prefix)]
+    meta_kv = [c for c in (well_meta.columns if have_meta else [])
+               if c.startswith(cfg.kv_prefix)]
+    if meta_kv:                     # covers the empty wells too
+        per_well = per_well.merge(wm[["plate", "well"] + meta_kv],
+                                  on=["plate", "well"], how="left")
+    elif kv_cols:
+        per_well = per_well.merge(
+            df.groupby(["plate", "well"], as_index=False)[kv_cols].first(),
+            on=["plate", "well"], how="left")
+    if kv_cols:
+        per_image = per_image.merge(
+            df.groupby(["image_id"], as_index=False)[kv_cols].first(),
+            on="image_id", how="left")
+
+    # ---- plots -------------------------------------------------------------
+    plot_platemap(per_well, "n_cells", plots / "platemap_n_cells.png",
+                  f"{tag} - total cells per well", cbar_label="cells",
+                  cmap="viridis", annotate=True)
+    if "cells_per_field" in per_well.columns:
+        plot_platemap(per_well, "cells_per_field", plots / "platemap_cells_per_field.png",
+                      f"{tag} - cells per field", cbar_label="cells / field",
+                      cmap="viridis", annotate=True)
+    if "mean_nuclear_area" in per_well.columns:
+        plot_platemap(per_well, "mean_nuclear_area",
+                      plots / "platemap_mean_nuclear_area.png",
+                      f"{tag} - mean nuclear area", cbar_label="px", cmap="cividis")
+    plot_cell_counts(per_well, plots / "cells_per_well.png", f"{tag} - cells per well")
+    plot_nuclear_profile(df, stat, plots / "nuclear_profile.png",
+                         f"{tag} - nuclear size and DNA content")
+    for chan in foci_chans:
+        plot_platemap(per_well, f"mean_foci_{chan}",
+                      plots / f"platemap_mean_foci_{safe(chan)}.png",
+                      f"{tag} - mean {chan} foci per nucleus")
+
+    group_col = None
+    if cfg.group_by:
+        wanted = [cfg.group_by, kv_column_name(cfg.group_by, cfg.kv_prefix)]
+        group_col = next((c for c in wanted if c and c in per_well.columns), None)
+        if group_col is None:
+            LOG.warning("[%s] --group-by '%s' not found. Available: %s",
+                        tag, cfg.group_by, ", ".join(kv_cols) or "(none)")
+    if group_col:
+        # replicate wells per condition: the unit of replication is the well
+        g = per_well.groupby(group_col)["n_cells"]
+        per_group = pd.DataFrame({"n_wells": g.size(), "total_cells": g.sum(),
+                                  "mean_cells_per_well": g.mean(),
+                                  "sd_cells_per_well": g.std()}).reset_index()
+        per_group.to_csv(outdir / f"per_{safe(group_col)}_summary.csv", index=False)
+        plot_cell_counts(per_well, plots / f"cells_per_well_by_{safe(group_col)}.png",
+                         f"{tag} - cells per well by {group_col}", by=group_col)
+
+    # ---- tables --------------------------------------------------------------
+    cells_path = write_table(df, outdir / "per_nucleus_measurements",
+                             cfg.per_nucleus_format)
+    per_well.to_csv(outdir / "per_well_summary.csv", index=False)
+    per_image.to_csv(outdir / "per_image_summary.csv", index=False)
+    with open(outdir / "thresholds.json", "w") as fh:
+        json.dump({"stat": stat, "markers": [], "mode": "count_only",
+                   "dead_filter": dead_info}, fh, indent=2)
+
+    n = per_well["n_cells"]
+    LOG.info("[%s] %d nuclei in %d wells | per well: median %.0f, range %d-%d",
+             tag, len(df), len(per_well), n.median(), n.min(), n.max())
+
+    if cfg.export_explorer:
+        write_explorer(df, outdir, tag, embed=not cfg.explorer_no_embed)
+    if conn is not None and cfg.attach_results and omero_obj is not None:
+        targets = [p for p in [cells_path, outdir / "per_well_summary.csv"]
+                   if p is not None]
         for p in targets + sorted(plots.glob("*.png")):
             try:
                 attach_file(conn, omero_obj, p)
@@ -2670,7 +2917,11 @@ def main(argv=None) -> int:
     if cfg.from_csv:
         LOG.info("Re-gating %s", cfg.from_csv)
         df = pd.read_csv(cfg.from_csv)
-        analyse(df, cfg, cfg.outdir, tag=cfg.from_csv.parent.name or "regated")
+        # the run that made this table also wrote which fields it imaged
+        meta_path = cfg.from_csv.parent / "well_metadata.csv"
+        wm = pd.read_csv(meta_path) if meta_path.exists() else None
+        analyse(df, cfg, cfg.outdir, tag=cfg.from_csv.parent.name or "regated",
+                well_meta=wm)
         LOG.info("Done -> %s", cfg.outdir)
         return 0
 
@@ -2681,6 +2932,7 @@ def main(argv=None) -> int:
     conn = connect(cfg)
     segmenter = Segmenter(cfg)
     all_plates: List[pd.DataFrame] = []
+    all_meta: List[pd.DataFrame] = []
     try:
         screen_kv: Dict[str, str] = {}
         if cfg.fetch_kv and "screen" in cfg.kv_levels and cfg.screen_id is not None:
@@ -2718,8 +2970,9 @@ def main(argv=None) -> int:
                     write_table(foci, pdir / "per_focus_measurements",
                                 "csv.gz" if fmt == "none" else fmt)
             gated = analyse(raw, cfg, pdir, tag=plate.getName(),
-                            conn=conn, omero_obj=plate)
+                            conn=conn, omero_obj=plate, well_meta=well_meta)
             all_plates.append(gated)
+            all_meta.append(well_meta)
 
         if getattr(cfg, "_pool_screen", False) and len(all_plates) > 1:
             pooled = pd.concat(all_plates, ignore_index=True)
@@ -2731,7 +2984,8 @@ def main(argv=None) -> int:
                                  errors="ignore")
             label = ("screen (pooled)" if cfg.screen_id is not None
                      else f"{len(all_plates)} plates (pooled)")
-            analyse(pooled, cfg, sdir, tag=label)
+            analyse(pooled, cfg, sdir, tag=label,
+                    well_meta=pd.concat(all_meta, ignore_index=True))
         elif getattr(cfg, "_pool_screen", False):
             LOG.info("--pool-screen needs more than one plate - skipping")
     finally:

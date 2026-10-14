@@ -1147,52 +1147,209 @@ const S = {
   result:null,
 };
 
-/* ---------- CSV ------------------------------------------- */
-function parseCSV(text){
-  const nl = text.indexOf("\n");
-  if(nl < 0) throw new Error("That file has no rows.");
-  const head0 = text.slice(0, nl);
-  const delim = [",","\t",";"].map(d=>[d, head0.split(d).length]).sort((a,b)=>b[1]-a[1])[0][0];
-  const split = line => {
-    const out = []; let cur = "", q = false;
-    for(let i=0;i<line.length;i++){
-      const c = line[i];
-      if(q){ if(c === '"'){ if(line[i+1] === '"'){cur+='"';i++;} else q=false; } else cur += c; }
-      else if(c === '"') q = true;
-      else if(c === delim){ out.push(cur); cur = ""; }
-      else if(c !== "\r") cur += c;
-    }
-    out.push(cur); return out;
-  };
-  // trailing "# ..." provenance lines from the Gating Explorer are metadata
-  const lines = text.split("\n").filter(l => l.length > 1 && !l.startsWith("#"));
-  const header = split(lines[0]);
-  const n = lines.length - 1;
-  if(n < 1) throw new Error("That file has a header but no data rows.");
+/* ---------- CSV reading (streamed) ------------------------- */
+/* NF-CSV-READER: identical in gating_explorer.html and condition_explorer.html.
+   Browsers cannot hold a string longer than ~512 MB (Chrome's TextDecoder
+   then silently returns ""), and a per-nucleus table of a full plate easily
+   exceeds that once unzipped. So the file is decompressed, decoded and parsed
+   chunk by chunk, straight into typed columns; the full text never exists. */
 
-  const numeric = header.map(()=>true);
-  for(let i=1;i<Math.min(lines.length, 500);i++){
-    const f = split(lines[i]);
-    for(let c=0;c<header.length;c++){
-      const v = f[c];
-      if(v === undefined || v === "" || v === "NA" || v === "NaN") continue;
-      if(v === "True" || v === "False") continue;
-      if(numeric[c] && !isFinite(Number(v))) numeric[c] = false;
+// Per-nucleus measurements are stored as 32-bit floats (7 significant digits,
+// far more than any microscope delivers) to halve memory; ids, plate/well
+// metadata, concentrations and everything else keep full 64-bit precision.
+const NF_F32 = /^(mean|median|integrated|foci)_|^(area|perimeter|eccentricity|solidity|x|y)$/;
+const NF_NA = new Set(["", "NA", "NaN", "nan", "N/A", "n/a", "null", "NULL", "None", "#N/A"]);
+
+function csvParser(){
+  const SAMPLE = 500, BLOCK = 1 << 16, MASK = BLOCK - 1;
+  let header = null, ncol = 0, delim = ",";
+  let sample = [], decided = false;
+  let numeric, blocks, cur, text, intern;
+  let n = 0, carry = "";
+
+  const splitQ = line => {                       // quote-aware, for lines that need it
+    const out = []; let f = "", q = false;
+    for(let i = 0; i < line.length; i++){
+      const c = line[i];
+      if(q){ if(c === '"'){ if(line[i+1] === '"'){ f += '"'; i++; } else q = false; } else f += c; }
+      else if(c === '"') q = true;
+      else if(c === delim){ out.push(f); f = ""; }
+      else f += c;
+    }
+    out.push(f); return out;
+  };
+  const fields = line => line.indexOf('"') < 0 ? line.split(delim) : splitQ(line);
+  const toNum = v => {
+    if(v === "True" || v === "true") return 1;
+    if(v === "False" || v === "false") return 0;
+    if(v === "inf") return Infinity;
+    if(v === "-inf") return -Infinity;
+    return NF_NA.has(v) ? NaN : Number(v);
+  };
+  const isNum = v => NF_NA.has(v) || v === "True" || v === "False" || v === "true" ||
+                     v === "false" || v === "inf" || v === "-inf" || (v.trim() !== "" && isFinite(Number(v)));
+
+  function decide(){
+    numeric = header.map(() => true);
+    for(const f of sample)
+      for(let c = 0; c < ncol; c++){
+        const v = f[c];
+        if(numeric[c] && v !== undefined && !isNum(v)) numeric[c] = false;
+      }
+    blocks = header.map(() => []); cur = new Array(ncol);
+    text = header.map((h, c) => numeric[c] ? null : []);
+    intern = header.map(() => new Map());
+    decided = true;
+    const s = sample; sample = null;
+    for(const f of s) addRow(f);
+  }
+  function newBlocks(){
+    for(let c = 0; c < ncol; c++) if(numeric[c]){
+      const a = NF_F32.test(header[c]) ? new Float32Array(BLOCK) : new Float64Array(BLOCK);
+      blocks[c].push(a); cur[c] = a;
     }
   }
-  const cols = {};
-  header.forEach((h,c)=>{ cols[h] = numeric[c] ? new Float64Array(n) : new Array(n); });
-  for(let i=1;i<lines.length;i++){
-    const f = split(lines[i]);
-    for(let c=0;c<header.length;c++){
-      const h = header[c], v = f[c];
-      if(numeric[c]) cols[h][i-1] = (v === "True") ? 1 : (v === "False") ? 0
-                     : (v === undefined || v === "") ? NaN : Number(v);
-      else cols[h][i-1] = v === undefined ? "" : v;
+  // A column that looked numeric in the first rows but turns out to hold text
+  // further down (e.g. "10" … then "DMSO") becomes a text column, keeping
+  // what was already read instead of silently turning words into NaN.
+  function toText(c){
+    const t = new Array(n);
+    for(let i = 0; i < n; i++){
+      const x = blocks[c][i >>> 16][i & MASK];
+      t[i] = Number.isNaN(x) ? "" : String(x);
     }
+    numeric[c] = false; blocks[c] = []; cur[c] = null; text[c] = t;
   }
-  return { header, cols, rows:n };
+  function addRow(f){
+    if((n & MASK) === 0) newBlocks();
+    const k = n & MASK;
+    for(let c = 0; c < ncol; c++){
+      let v = f[c];
+      if(v === undefined) v = "";
+      if(numeric[c]){
+        const x = toNum(v);
+        if(x === x || NF_NA.has(v)){ cur[c][k] = x; continue; }
+        toText(c);
+      }
+      // reuse one copy of repeated labels (well names, compounds, …)
+      const m = intern[c];
+      let s = m.get(v);
+      if(s === undefined){ s = v; if(m.size < 200000) m.set(v, v); }
+      text[c].push(s);
+    }
+    n++;
+  }
+  function line(l){
+    if(l.length && l.charCodeAt(l.length - 1) === 13) l = l.slice(0, -1);
+    if(!l.length || l[0] === "#" || !l.trim()) return;
+    if(!header){
+      if(l.charCodeAt(0) === 0xFEFF) l = l.slice(1);       // Excel's byte-order mark
+      const cnt = d => l.split(d).length;
+      delim = [",", "\t", ";"].reduce((a, d) => cnt(d) > cnt(a) ? d : a, ",");
+      header = fields(l).map(h => h.trim()); ncol = header.length;
+      return;
+    }
+    const f = fields(l);
+    if(!decided){ sample.push(f); if(sample.length >= SAMPLE) decide(); }
+    else addRow(f);
+  }
+  return {
+    get rows(){ return decided ? n : (sample ? sample.length : 0); },
+    push(chunk){
+      const t = carry ? carry + chunk : chunk;
+      let start = 0, nl;
+      while((nl = t.indexOf("\n", start)) >= 0){ line(t.slice(start, nl)); start = nl + 1; }
+      carry = t.slice(start);
+    },
+    finish(){
+      if(carry){ line(carry); carry = ""; }
+      if(!header) throw new Error("That file is empty — no header row was found.");
+      if(!decided) decide();
+      if(!n) throw new Error("That file has a header but no data rows.");
+      const cols = {};
+      header.forEach((h, c) => {
+        if(!numeric[c]){ cols[h] = text[c]; return; }
+        const b = blocks[c], out = new b[0].constructor(n);
+        for(let i = 0; i < b.length; i++){
+          const len = Math.min(BLOCK, n - i * BLOCK);
+          out.set(len === BLOCK ? b[i] : b[i].subarray(0, len), i * BLOCK);
+          b[i] = null;                                   // free as we go
+        }
+        cols[h] = out;
+      });
+      return { header, cols, rows: n };
+    },
+  };
 }
+
+/** Parse a CSV that is already a string (small files, embedded data). */
+function parseCSV(str){ const P = csvParser(); P.push(str); return P.finish(); }
+
+/** Stream a File (plain or .gz) into columns. onProgress(fraction, rows). */
+async function readTable(file, onProgress){
+  const sig = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+  const gz = /\.gz$/i.test(file.name) || (sig[0] === 0x1f && sig[1] === 0x8b);
+  const P = csvParser(), dec = new TextDecoder("utf-8");
+  const total = file.size || 1;
+  let readBytes = 0, tick = performance.now();
+  const step = async bytes => {
+    const s = dec.decode(bytes, { stream: true });
+    if(s) P.push(s);
+    const now = performance.now();
+    if(now - tick > 120){                               // let the page repaint
+      tick = now;
+      if(onProgress) onProgress(Math.min(readBytes / total, 1), P.rows);
+      await new Promise(r => setTimeout(r, 0));
+    }
+  };
+  try{
+    if(gz && typeof DecompressionStream === "function"){
+      const counted = file.stream().pipeThrough(new TransformStream({
+        transform(ch, ctl){ readBytes += ch.byteLength; ctl.enqueue(ch); } }));
+      const rd = counted.pipeThrough(new DecompressionStream("gzip")).getReader();
+      for(;;){ const { done, value } = await rd.read(); if(done) break; await step(value); }
+    } else if(gz){
+      if(typeof pako === "undefined") throw new Error(
+        "This file is gzipped and this browser cannot unzip it offline. Use a current " +
+        "Chrome, Edge or Firefox, or unzip the file first and load the plain .csv.");
+      const out = [];
+      const inf = new pako.Inflate();
+      inf.onData = c => out.push(c);
+      const SL = 8 << 20;
+      for(let o = 0; o < file.size; o += SL){
+        const u = new Uint8Array(await file.slice(o, o + SL).arrayBuffer());
+        readBytes = Math.min(o + SL, file.size);
+        inf.push(u, o + SL >= file.size);
+        if(inf.err) throw new Error("Could not unzip this file: " + inf.msg);
+        while(out.length) await step(out.shift());
+      }
+      if(!inf.ended) throw new TypeError("the compressed data ends early");
+    } else {
+      const rd = file.stream().getReader();
+      for(;;){
+        const { done, value } = await rd.read(); if(done) break;
+        readBytes += value.byteLength; await step(value);
+      }
+    }
+    const rest = dec.decode();
+    if(rest) P.push(rest);
+    if(onProgress) onProgress(1, P.rows);
+    return P.finish();
+  }catch(e){
+    if(e instanceof RangeError || /allocation|out of memory/i.test(e.message || "")){
+      const pct = Math.round(100 * readBytes / total);
+      throw new Error(`The browser ran out of memory after ${P.rows.toLocaleString()} rows ` +
+        `(about ${pct}% of the file). Close other tabs and try again, or load a smaller ` +
+        `table: one plate at a time, or a per-well summary for the analysis tab.`);
+    }
+    if(gz && (e instanceof TypeError || /gzip|decompress|compressed|corrupt|header/i.test(e.message || "")))
+      throw new Error("This .gz file looks damaged or incomplete" +
+        (e.message ? " (" + e.message + ")" : "") +
+        ". Was it still being written or copied when you opened it? Copy it again and reload.");
+    throw e;
+  }
+}
+/* /NF-CSV-READER */
 
 /* ---------- detect the shape of the file ------------------- */
 function detect(){
@@ -1217,9 +1374,11 @@ function detect(){
   // rarely the thing you set out to compare.
   const pref = S.metrics.find(m => /^pct_.*_positive$/.test(m.key))
             || S.metrics.find(m => /^pct_(double|triple)/.test(m.key))
-            || S.metrics.find(m => /^pct_/.test(m.key))
+            || S.metrics.find(m => /^pct_(?!dead)/.test(m.key))
             || S.metrics.find(m => m.key.startsWith("__pop_"))
             || S.metrics.find(m => /^pos_/.test(m.key))
+            // no marker readouts at all (a DAPI-only plate): the count IS the readout
+            || S.metrics.find(m => m.key === "n_cells" || m.key === "__n")
             || S.metrics.find(m => !/^n_cells$/.test(m.key))
             || S.metrics[0];
   S.metric = pref.key;
@@ -1296,20 +1455,41 @@ function buildMetrics(){
       out.push({ key:c, label:c.replace(/_/g," "), agg:"first" });
     }
   } else {
-    out.push({ key:"__n", label:"cells per well", agg:"count" });
-    out.push({ key:"__frac", label:"% of well in this population", agg:"fracOfWell" });
-    for(const c of h) if(/^pos_/.test(c) && !isHidden(c))
-      out.push({ key:c, label:"% "+c.slice(4)+" positive", agg:"pctTrue" });
-    if(h.includes("population"))
-      for(const p of POP_ORDER)
-        if(classAllowed(p) && new Set(S.cols["population"]).has(p))
-          out.push({ key:"__pop_"+p, label:"% "+p, agg:"pctPop" });
+    const posCols = h.filter(c => /^pos_/.test(c) && !isHidden(c));
+    let classes = [];
+    if(h.includes("population")){
+      const present = distinctValues(S.cols["population"]);     // one pass, not one per class
+      classes = POP_ORDER.filter(p => classAllowed(p) && present.has(p));
+    }
+    const cls = p => p === "negative" ? "negative" : p + "-positive";
+    // absolute numbers of cells…
+    out.push({ key:"__n", label:"cells per well", agg:"count", grp:"count" });
+    for(const c of posCols)
+      out.push({ key:"__npos_"+c, col:c, label:c.slice(4)+"-positive cells per well",
+                 agg:"countTrue", grp:"count" });
+    for(const p of classes)
+      out.push({ key:"__npop_"+p, want:p, label:cls(p)+" cells per well",
+                 agg:"countPop", grp:"count" });
+    // …and the same as a share of the well
+    out.push({ key:"__frac", label:"% of well in this population", agg:"fracOfWell", grp:"pct" });
+    for(const c of posCols)
+      out.push({ key:c, label:"% "+c.slice(4)+" positive", agg:"pctTrue", grp:"pct" });
+    for(const p of classes)
+      out.push({ key:"__pop_"+p, label:"% "+p, agg:"pctPop", grp:"pct" });
     for(const c of h) if(/^(mean|median|integrated)_/.test(c) && !isHidden(c)){
       const [stat, ...rest] = c.split("_");
       out.push({ key:c, label:`${rest.join("_")} ${stat} intensity, per well`, agg:"mean" });
     }
     for(const c of h) if(/^foci_n_/.test(c) && !isHidden(c))
       out.push({ key:c, label:c.slice(7)+" foci per nucleus, per well", agg:"mean" });
+    // nuclear morphology: on a DAPI-only plate this is most of what there is
+    if(h.includes("area") && ArrayBuffer.isView(S.cols["area"]))
+      out.push({ key:"area", label:"nuclear area, per well", agg:"mean", grp:"nuc" });
+    if(h.includes("dead") && ArrayBuffer.isView(S.cols["dead"]) && S.cols["dead"].some(v => v > 0.5)){
+      out.push({ key:"__npos_dead", col:"dead", label:"dead/dying cells per well (bright DAPI)",
+                 agg:"countTrue", grp:"count" });
+      out.push({ key:"dead", label:"% dead/dying (bright DAPI)", agg:"pctTrue", grp:"pct" });
+    }
   }
   S.metrics = out;
 }
@@ -1339,6 +1519,16 @@ function wellValue(w, sub){
     const v = S.cols[m.key]; let k = 0;
     for(const i of rows) if(v[i] > 0.5) k++;
     return 100*k/rows.length;
+  }
+  if(m.agg === "countTrue"){
+    const v = S.cols[m.col]; let k = 0;
+    for(const i of rows) if(v[i] > 0.5) k++;
+    return k;
+  }
+  if(m.agg === "countPop"){
+    const v = S.cols["population"]; let k = 0;
+    for(const i of rows) if(v[i] === m.want) k++;
+    return k;
   }
   if(m.agg === "pctPop"){
     const want = m.key.slice(6), v = S.cols["population"]; let k = 0;
@@ -1580,6 +1770,16 @@ function splitValue(v){
   if(typeof v === "number") return v > 0.5 ? "positive" : "negative";
   return String(v);
 }
+/** Distinct values of a column over the cells in the analysis (the current
+ *  plate, minus excluded cells). Stops early past `limit` distinct values. */
+function distinctValues(col, limit){
+  const seen = new Set();
+  for(const w of S.wells){
+    for(const i of S.wellRows.get(w)) seen.add(col[i]);
+    if(limit && seen.size > limit) break;
+  }
+  return seen;
+}
 /** Columns we can split cells on: the positivity calls and class labels. */
 function splitCandidates(){
   if(S.kind !== "cell") return [];
@@ -1593,14 +1793,9 @@ function splitCandidates(){
     else if(c === "population" || c === "combination"){
       // Name the classes rather than counting them: "population (4 classes)"
       // gives no clue that double-positive cells are one of the options.
-      const seen = new Set();
-      for(const w of S.wells)
-        for(const i of S.wellRows.get(w)){
-          const v = String(S.cols[c][i]);
-          if(v && v !== "undefined" && classAllowed(v)) seen.add(v);
-          if(seen.size > 9) break;
-        }
-      const classes = [...seen];
+      // distinct labels first, then judge those few (not every cell)
+      const classes = [...distinctValues(S.cols[c], 64)].map(String)
+        .filter(v => v && v !== "undefined" && classAllowed(v));
       if(classes.length < 2 || classes.length > 8) continue;
       const order = ["negative","single","double","triple","quadruple","quintuple"];
       classes.sort((a,b)=>{
@@ -1619,10 +1814,10 @@ function splitCandidates(){
 }
 function splitLevels(){
   if(!S.split || !S.cols[S.split]) return [];
-  const v = S.cols[S.split], seen = new Set();
   const classy = S.split === "population" || S.split === "combination";
-  for(const w of S.wells) for(const i of S.wellRows.get(w)){
-    const s = splitValue(v[i]);
+  const seen = new Set();
+  for(const raw of distinctValues(S.cols[S.split])){
+    const s = splitValue(raw);
     if(s === "" || s === "undefined") continue;      // cells outside the gating set
     if(classy && !classAllowed(s)) continue;         // unreachable with these markers
     seen.add(s);
@@ -3020,24 +3215,16 @@ function exportReport(){
 
 /* ---------- load ------------------------------------------ */
 const errEl = document.getElementById("err");
-const busy = on => document.getElementById("busy").classList.toggle("on", on);
+const busy = on => { const b = document.getElementById("busy");
+  b.textContent = "reading…"; b.classList.toggle("on", on); };
+const progress = (f, rows) => { document.getElementById("busy").textContent =
+  `reading… ${Math.round(100*f)}%  ·  ${rows.toLocaleString()} rows`; };
 
 async function load(file){
   errEl.textContent = ""; busy(true);
   await new Promise(r=>setTimeout(r,30));
   try{
-    const buf = await file.arrayBuffer();
-    const head = new Uint8Array(buf,0,2);
-    const gz = file.name.toLowerCase().endsWith(".gz") || (head[0]===0x1f && head[1]===0x8b);
-    let text;
-    if(gz){
-      if(typeof pako === "undefined") throw new Error(
-        "This file is gzipped and the decompressor didn't load (no internet?). "+
-        "Use a plain .csv, or unzip it first.");
-      text = pako.inflate(new Uint8Array(buf), {to:"string"});
-    } else text = new TextDecoder().decode(buf);
-
-    const p = parseCSV(text);
+    const p = await readTable(file, progress);
     S.name = file.name; S.header = p.header; S.cols = p.cols; S.rows = p.rows;
     S.groups = []; S.assign = new Map(); S.active = 0; S.ref = 0;
     detect();
@@ -3085,7 +3272,7 @@ function drawSplitHint(){
   }
   const subs = splitLevels();
   const m = S.metrics.find(x=>x.key===S.metric);
-  const advice = (m && (m.agg === "count" || m.agg === "fracOfWell"))
+  const advice = (m && ["count","countTrue","countPop","fracOfWell"].includes(m.agg))
     ? ""
     : `<br><span style="color:var(--warn)">With “${escapeHtml(m?m.label:"")}” as the
        readout, check this is meaningful within a subpopulation — <b>cells per well</b>
@@ -3099,14 +3286,34 @@ function buildSiOptions(){
   const siSel = document.getElementById("si");
   if(!siSel) return;
   const keep = S.si;
-  siSel.innerHTML = `<option value="">— none —</option>` + S.metrics
-    .filter(m => m.key !== S.metric)
-    .map(m=>`<option value="${m.key}">${escapeHtml(m.label)}</option>`).join("");
+  siSel.innerHTML = `<option value="">— none —</option>` +
+    metricOptionsHTML(S.metrics.filter(m => m.key !== S.metric));
   S.si = [...siSel.options].some(o=>o.value === keep) ? keep : "";
   siSel.value = S.si;
   siSel.onchange = () => { S.si = siSel.value; refresh(); };
 }
 
+/** Readout <option>s, sorted into labelled groups so counts, percentages
+ *  and intensities are easy to tell apart in a long list. */
+const METRIC_GROUPS = [["count","Number of cells"],["pct","Percentage of cells"],
+  ["int","Intensity"],["nuc","Nucleus"],["foci","Foci"],["other","Other"]];
+function metricGroup(m){
+  if(m.grp) return m.grp;
+  const k = m.key;
+  if(/^n_|_count$|^count_|^cells_per_/.test(k)) return "count";
+  if(/^pct_|^frac_|_pct$|^%/.test(k)) return "pct";
+  if(/foci/.test(k)) return "foci";
+  if(/nuclear_area|^area$|solidity|eccentricity/.test(k)) return "nuc";
+  if(/^(mean|median|integrated)_/.test(k)) return "int";
+  return "other";
+}
+function metricOptionsHTML(list){
+  const opt = x => `<option value="${x.key}">${escapeHtml(x.label)}</option>`;
+  const used = METRIC_GROUPS.filter(([g]) => list.some(x => metricGroup(x) === g));
+  if(used.length < 2) return list.map(opt).join("");
+  return used.map(([g, name]) => `<optgroup label="${name}">` +
+    list.filter(x => metricGroup(x) === g).map(opt).join("") + `</optgroup>`).join("");
+}
 /** Repopulate the readout dropdown from S.metrics, keeping the current choice
  *  if it still exists. Needed whenever the metric list changes, not only on
  *  load — otherwise a marker switched off upstream lingers in the list. */
@@ -3114,8 +3321,7 @@ function buildMetricOptions(){
   const m = document.getElementById("metric");
   if(!m) return;
   const keep = S.metric;
-  m.innerHTML = S.metrics.map(x=>
-    `<option value="${x.key}">${escapeHtml(x.label)}</option>`).join("");
+  m.innerHTML = metricOptionsHTML(S.metrics);
   S.metric = S.metrics.some(x => x.key === keep) ? keep
            : (S.metrics[0] ? S.metrics[0].key : null);
   m.value = S.metric;

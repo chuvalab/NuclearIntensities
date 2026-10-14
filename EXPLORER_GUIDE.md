@@ -16,11 +16,12 @@ have a single file with your data inside it. Double-click
 
 **Otherwise**, double-click `gating_explorer.html` and drag your
 `per_nucleus_measurements.csv` onto the window. If your file ends in `.csv.gz`
-it will be unzipped automatically, provided you have internet access; if you're
-offline, ask for it as plain `.csv` (`--per-nucleus-format csv`).
+it is unzipped automatically by the browser itself — no internet needed in a
+current Chrome, Edge, Firefox or Safari.
 
-It handles around a million nuclei. A 96-well plate with 250,000 cells takes
-about a second to load, after which everything is instant.
+A 96-well plate with 250,000 cells loads in about a second; a full 384-well
+plate with 1.7 million nuclei in about 20 seconds (a progress counter shows how
+far it is). The limit is your computer's memory, not the file size.
 
 ---
 
@@ -221,8 +222,10 @@ Keep that file. If someone asks how you got a number, the answer is in it.
 | What you see | What to do |
 |---|---|
 | "No intensity columns found" | This isn't a per-nucleus file. Look for `per_nucleus_measurements.csv`, not a summary. |
-| "This file is gzipped and the decompressor didn't load" | You're offline. Ask for a plain `.csv`, or unzip it first. |
+| "This browser cannot unzip it offline" | An old browser. Update it, or unzip the file and load the plain `.csv`. |
+| "That file has no rows" on a large file | You have an old copy of the tool (it could not read files over ~512 MB). Replace it with the current version. |
+| "The browser ran out of memory after … rows" | Close other tabs and retry, or load one plate at a time. |
 | Nothing happens when you drop a file | Drop it on the window, not the button. Or use "Choose a file". |
 | A marker won't switch off | At least one has to stay on. |
-| The browser stalls on a huge file | Over ~1M nuclei, analyse one plate at a time. |
+| Dragging a gate feels sluggish | Over a few million nuclei, untick wells you don't need, or load one plate at a time. |
 | Percentages don't match my report | Check the same wells are included and the same markers are on — the header shows both counts. |
