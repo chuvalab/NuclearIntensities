@@ -61,6 +61,15 @@ one:
   your file already carries the gates you want, or if you are working from a
   `per_well_summary.csv`.
 
+And one tool built for a specific question:
+
+- **`foci_workbench.html`** — foci per nucleus in two marker-defined
+  populations across a dose series: does the drug induce more foci, and does
+  one population respond more than the other? Shows the whole distribution
+  (not just a mean), tests with the well as the replicate, and fits a
+  population × concentration model on every cell. See
+  [`FOCI_WORKBENCH_GUIDE.md`](FOCI_WORKBENCH_GUIDE.md).
+
 ---
 
 **Files in this repository**
@@ -77,6 +86,8 @@ one:
 | `EXPLORER_GUIDE.md` | student-facing guide to the gating explorer |
 | `condition_explorer.html` | the analysis half on its own |
 | `CONDITION_EXPLORER_GUIDE.md` | guide to the condition explorer |
+| `foci_workbench.html` | foci in two populations across a dose series, with statistics |
+| `FOCI_WORKBENCH_GUIDE.md` | guide to the foci workbench, including how to read the statistics |
 | `build_workbench.py` | rebuilds the workbench from the two standalone files |
 | `WINDOWS_LATEST_TENSORFLOW.md` | short guide to running current TensorFlow on Windows via WSL2 |
 | `README.md` | this file |
@@ -1320,6 +1331,60 @@ green. Foci parameters are the easiest thing in this pipeline to fool yourself
 with; five minutes looking at overlays is worth more than any amount of argument
 about defaults.
 
+**False positives: which knob for which problem.** Look at the crops
+(`--save-foci-crops`) and match what you see:
+
+| What the crops show | Cause | Fix |
+|---|---|---|
+| single faint "foci" in dim nuclei | the threshold is relative to each nucleus's own background, so in a dim nucleus a faint speck qualifies | **`--foci-min-peak`**: an absolute floor every focus must clear, on top of the per-nucleus threshold |
+| "foci" on the edge of a dim nucleus, next to a bright one | the bright neighbour's glow reaches inside the outline | **`--foci-edge-guard`**: drops a focus if anything just outside its nucleus is as bright as the focus itself |
+| many "foci" in uniformly bright nuclei | pan-nuclear γ-H2AX: texture, not foci | exclude those nuclei with the *pan-nuclear* window in the Foci Workbench, and report their share separately |
+| "foci" in a region that belongs to another cell | segmentation error (outline spills into a neighbour) | the Workbench's solidity / eccentricity / area windows |
+| too many weak foci everywhere | threshold too low overall | raise `--foci-k` (3 → 4); costs sensitivity |
+
+Choosing the floor: run a few wells with `--save-foci-table` and look at the
+`tophat_peak` column (each focus's height above its local background, in the
+same units as `--foci-min-peak`). Faint specks and real foci usually form two
+groups; put the floor between them, then check the crops again. In testing on
+simulated 20x fields, specks had a median `tophat_peak` of 200 and real foci
+525. A floor of 200 removed every speck "focus" from dim nuclei without losing
+a real one, and the edge guard cut neighbour-glow "foci" from 1.6 to 0.4 per
+nucleus, also without losing real foci. Raising `--foci-k` from 3 to 4 found
+63% instead of 72% of real foci, so prefer the floor. `--foci-log-threshold`
+made no difference in these tests.
+
+Faint single foci in untreated cells are not necessarily artefacts: S-phase
+cells carry low-level, replication-associated γ-H2AX foci. Decide what counts as
+a focus (the floor), fix it before you look at the treatment groups, and state
+it in the methods. Readouts such as "% nuclei with ≥ 3 foci" are much less
+sensitive to the odd faint focus than the mean count.
+
+**Speed.** The LoG detector (the default `--foci-method log`) is the expensive
+part of a foci run, because at 20x it works on a 3× upsampled copy of each
+field. It is computed only in the parts of the field that hold candidate foci,
+and spread over several CPU cores (`--foci-threads`, default: up to 8). The log
+reports the time for the first field and the average per plate:
+
+```
+  foci detection: 4.2 s for this field
+  ...
+  foci detection: 380 s in total, 4.0 s per field (96 fields)
+```
+
+If that is still too slow for a large screen, in order of how little they
+change the result:
+
+1. `--foci-threads N` — more cores, if your machine has them (identical results)
+2. `--foci-num-sigma 3` — fewer LoG scales (about a third less work; foci of very
+   different sizes are separated slightly less well)
+3. `--foci-upsample 2` — less upsampling at 20x (about half the work; the
+   smallest, faintest foci are found slightly less reliably)
+4. `--foci-method tophat` — no LoG at all, much faster; touching foci are no
+   longer split, so counts in heavily damaged nuclei come out lower
+
+Check any of these against the crops (`--save-foci-crops`) on a few wells
+before committing a whole screen to it.
+
 **Foci as the positivity criterion.** By default the foci channel is *also*
 gated on mean intensity like any other marker. `--foci-as-marker` switches that
 channel's +/− call to "has ≥ `--foci-min-count` foci", which then feeds into the
@@ -1761,6 +1826,9 @@ always computed on the *full* data.
 | `--foci-tophat-radius` | `5.0` | must exceed the largest focus |
 | `--foci-min-sigma` / `--foci-max-sigma` | `1.0` / `4.0` | LoG scale range |
 | `--foci-num-sigma` | `5` | scales sampled |
+| `--foci-threads` | `0` | CPU threads for LoG foci detection; 0 = auto (up to 8) |
+| `--foci-min-peak` | none | absolute floor on each focus's height above local background (`tophat_peak` units), on top of `--foci-k` |
+| `--foci-edge-guard` | off | drop edge "foci" that are glow from a brighter neighbouring cell |
 | `--foci-log-threshold` | `0.02` | detector sensitivity; lower = more foci |
 | `--foci-k` | `3.0` | SDs above each nucleus's own background |
 | `--foci-abs-threshold` | — | fixed cutoff instead of per-nucleus |

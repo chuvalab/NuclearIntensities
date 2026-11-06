@@ -1,0 +1,2371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Foci Workbench — foci per population across a dose series</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --void:#0B1017; --panel:#141C28; --panel-2:#1B2534; --line:#2C3D52;
+  --ink:#F1F5F9; --dim:#A7B3C3; --faint:#7A8EA9; --off:#33455C;
+  --pA:#56B4E9; --pB:#E69F00;            /* Okabe–Ito: the two populations */
+  --ok:#3FD16B; --warn:#FFA23D; --bad:#FF5470; --acc:#56B4E9;
+  --r:3px;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:'Space Grotesk',ui-sans-serif,system-ui,-apple-system,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--void); color:var(--ink); font-family:var(--sans);
+  font-size:13px; line-height:1.45; overflow:hidden; -webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--acc); outline-offset:2px}
+
+#app{display:none; height:100vh; grid-template-rows:auto 1fr}
+#app.ready{display:grid}
+header{display:flex; align-items:center; gap:16px; padding:9px 16px;
+  border-bottom:1px solid var(--line); background:var(--panel)}
+.brand{font-weight:700; letter-spacing:-.02em; font-size:14px; white-space:nowrap}
+.brand span{color:var(--pB)}
+.stat{font-family:var(--mono); font-size:11px; color:var(--dim); white-space:nowrap}
+.stat b{color:var(--ink); font-weight:500; font-variant-numeric:tabular-nums}
+header .sp{flex:1}
+.btn{background:var(--panel-2); border:1px solid var(--line); border-radius:var(--r);
+  padding:5px 11px; font-size:11.5px; cursor:pointer; white-space:nowrap}
+.btn:hover{border-color:var(--faint); background:#26344A}
+.btn.primary{border-color:var(--acc); color:var(--acc)}
+.btn.small{padding:3px 8px; font-size:10.5px}
+
+main{display:grid; grid-template-columns:372px 1fr; min-height:0}
+aside{border-right:1px solid var(--line); background:var(--panel);
+  overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:18px}
+.work{overflow-y:auto; padding:16px 18px 44px; display:flex; flex-direction:column; gap:18px}
+.sec-h{display:flex; align-items:baseline; gap:8px; margin-bottom:8px;
+  font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--dim)}
+.sec-h .n{font-family:var(--mono); color:var(--faint); font-size:10px;
+  text-transform:none; letter-spacing:0}
+.card{background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:14px}
+.row{display:flex; align-items:center; gap:8px; margin:8px 0 4px}
+.row label{font-size:11px; color:var(--dim)}
+.row .grow{flex:1}
+select,input[type=text],input[type=number],textarea{background:var(--panel-2);
+  border:1px solid var(--line); border-radius:var(--r); padding:4px 7px; font-size:11px;
+  font-family:var(--mono); width:100%}
+input[type=number]{width:74px}
+textarea{height:118px; resize:vertical; line-height:1.4}
+.chk{display:flex; align-items:center; gap:7px; font-size:11px; color:var(--dim); margin-top:6px; cursor:pointer}
+.hint{color:var(--faint); font-size:11px; font-family:var(--mono); line-height:1.5}
+.pops{display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:6px}
+.pop{display:flex; align-items:center; gap:6px; background:var(--panel-2);
+  border:1px solid var(--line); border-radius:var(--r); padding:3px 6px}
+.pop i{width:10px; height:10px; border-radius:2px; flex:none}
+.pop input{border:0; background:none; padding:2px; width:100%}
+.pop .ct{font-family:var(--mono); font-size:10px; color:var(--dim); white-space:nowrap}
+
+.plot canvas{width:100%; display:block; border-radius:2px}
+.plot .cap{font-family:var(--mono); font-size:10px; color:var(--faint); margin-top:5px; text-align:center}
+.grid2{display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:16px}
+canvas.drag{cursor:ew-resize}
+
+.tbl{width:100%; border-collapse:collapse; font-family:var(--mono); font-size:10.5px}
+.tbl th{text-align:right; color:var(--dim); font-weight:500; padding:5px 7px;
+  border-bottom:1px solid var(--line); font-size:9.5px; letter-spacing:.04em;
+  text-transform:uppercase; white-space:nowrap; position:sticky; top:0; background:var(--panel)}
+.tbl th .u{text-transform:none}
+.tbl th:first-child,.tbl td:first-child{text-align:left}
+.tbl td{padding:4px 7px; border-bottom:1px solid #22303F; text-align:right;
+  font-variant-numeric:tabular-nums; white-space:nowrap}
+.tbl td.l{text-align:left; white-space:normal}
+.tbl tr:hover td{background:var(--panel-2)}
+.tbl tr.off td{color:var(--faint); text-decoration:line-through}
+.tbl tr.off td:last-child{text-decoration:none}
+.tblScroll{max-height:360px; overflow:auto}
+.sig{font-weight:700}
+.sig.y{color:var(--ok)} .sig.n{color:var(--faint)}
+.verdict{font-size:12px; line-height:1.6; margin-top:10px; color:var(--ink)}
+.verdict b{font-weight:500}
+.verdict .muted{color:var(--dim)}
+.k{display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:4px; vertical-align:-1px}
+
+.warn{border-left:3px solid var(--warn); background:rgba(255,162,61,.07);
+  padding:9px 12px; border-radius:var(--r); font-size:11.5px; line-height:1.55; margin-bottom:10px}
+.warn b{color:var(--warn)}
+.warn.info{border-left-color:var(--acc); background:rgba(86,180,233,.06)}
+.warn.info b{color:var(--acc)}
+
+#drop{position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+  flex-direction:column; gap:20px; background:var(--void); z-index:50; padding:24px}
+#drop.hide{display:none}
+.dz{border:1px dashed var(--line); border-radius:6px; padding:42px 52px; text-align:center; max-width:660px}
+.dz.hot{border-color:var(--acc); background:rgba(86,180,233,.05)}
+.dz h1{font-size:23px; font-weight:700; letter-spacing:-.025em; margin-bottom:6px}
+.dz h1 em{font-style:normal; color:var(--pB)}
+.dz p{color:var(--dim); font-size:12.5px; margin-bottom:18px; line-height:1.6}
+.dz code{font-family:var(--mono); font-size:11.5px; color:var(--pB); background:var(--panel); padding:1px 5px; border-radius:2px}
+#err{color:var(--bad); font-family:var(--mono); font-size:11.5px; max-width:660px; text-align:center; min-height:17px}
+#busy{position:fixed;inset:0;background:rgba(11,16,23,.82);display:none;align-items:center;
+  justify-content:center;z-index:60;font-family:var(--mono);font-size:12px;color:var(--acc)}
+#busy.on{display:flex}
+/* ---- QC range gates (same as the gating explorer) ---- */
+.qcGrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(196px,1fr)); gap:12px 14px}
+.qc{min-width:0}
+.qc-h{display:flex; align-items:center; gap:6px; margin-bottom:2px}
+.qc-h .nm{font-size:11.5px; font-weight:500}
+.qc-h .kind{font-family:var(--mono); font-size:9px; color:var(--faint)}
+.qc-h .sw{margin-left:auto; width:26px; height:14px; border-radius:8px; background:var(--off);
+  border:1px solid var(--line); position:relative; cursor:pointer; flex:none}
+.qc-h .sw::after{content:""; position:absolute; top:1px; left:1px; width:10px; height:10px;
+  border-radius:50%; background:var(--dim); transition:transform .12s, background .12s}
+.qc.on .sw{background:rgba(86,180,233,.25); border-color:var(--acc)}
+.qc.on .sw::after{transform:translateX(12px); background:var(--acc)}
+.qc .rangeWrap{position:relative; height:52px; cursor:ew-resize; touch-action:none}
+.qc .rangeWrap canvas{position:absolute; inset:0; width:100%; height:100%}
+.qc.off .rangeWrap{opacity:.45}
+.qc .lims{display:flex; gap:5px; margin-top:3px}
+.qc .lims input{font-family:var(--mono); font-size:10px; padding:2px 4px; text-align:center;
+  background:var(--panel-2); border:1px solid var(--line); border-radius:2px; width:100%}
+.qc .lims input:disabled{opacity:.4}
+#toast{position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--panel-2);
+  border:1px solid var(--line); border-left:3px solid var(--warn); padding:8px 14px; border-radius:var(--r);
+  font-size:11.5px; display:none; z-index:70; max-width:640px}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:var(--void)}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+@media (max-width:900px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div id="drop">
+  <div class="dz" id="dz">
+    <h1>Foci <em>Workbench</em></h1>
+    <p>Foci per nucleus in two marker-defined populations, across a dose series.<br>
+       Drop the pipeline's <code>per_nucleus_measurements.csv.gz</code> (run with
+       <code>--foci-channel</code>).<br>
+       Statistics treat the <b>well</b> as the replicate. Nothing leaves your computer.</p>
+    <button class="btn primary" id="pick">Choose a file</button>
+    <input type="file" id="file" accept=".csv,.gz,.tsv,.txt" hidden>
+  </div>
+  <div id="err"></div>
+</div>
+<div id="busy">reading…</div>
+<div id="toast"></div>
+
+<div id="app">
+  <header>
+    <div class="brand">Foci <span>Workbench</span></div>
+    <div class="stat" id="sFile">—</div>
+    <div class="stat">cells <b id="sCells">0</b></div>
+    <div class="stat">wells <b id="sWells">0</b></div>
+    <div class="stat">doses <b id="sDoses">0</b></div>
+    <div class="sp"></div>
+    <button class="btn primary" id="bExport">Export results</button>
+    <button class="btn" id="bNew">New file</button>
+  </header>
+  <main>
+    <aside>
+      <section>
+        <div class="sec-h"><span>Data</span></div>
+        <div class="row"><label for="foci">Foci channel</label></div>
+        <select id="foci"></select>
+        <div id="plateBox"><div class="row"><label for="plate">Plate</label></div>
+          <select id="plate"></select></div>
+        <div class="row"><label for="cellset">Cells</label></div>
+        <select id="cellset">
+          <option value="all">all nuclei</option>
+          <option value="g1">G1 only (2N DNA content)</option>
+          <option value="g2">G2/M only (4N DNA content)</option>
+        </select>
+        <div class="plot" id="dnaBox" style="margin-top:6px"><canvas id="cDNA"></canvas>
+          <div class="hint" id="dnaHint" style="margin-top:4px"></div></div>
+        <label class="chk" id="deadBox"><input type="checkbox" id="exDead" checked> leave out dead/dying nuclei (bright DAPI)</label>
+      </section>
+
+      <section>
+        <div class="sec-h"><span>Populations</span><span class="n" id="gateNote"></span></div>
+        <select id="marker"></select>
+        <div class="plot" style="margin-top:8px"><canvas id="cGate" class="drag"></canvas></div>
+        <div class="row"><label for="thr">Threshold</label><input type="text" id="thr" class="grow">
+          <button class="btn small" id="bAuto" title="Otsu on log intensity">auto</button></div>
+        <div class="pops">
+          <div class="pop"><i style="background:var(--pA)"></i><input id="nameA"><span class="ct" id="ctA"></span></div>
+          <div class="pop"><i style="background:var(--pB)"></i><input id="nameB"><span class="ct" id="ctB"></span></div>
+        </div>
+        <div class="hint" style="margin-top:6px">Drag the line or type a value. Cells above the threshold form the second population.</div>
+        <div id="afBox">
+          <div class="row" style="margin-top:12px"><label for="afMode">Autofluorescence correction</label></div>
+          <select id="afMode">
+            <option value="none">none</option>
+            <option value="iso">negative-peak shift, fitted across concentrations</option>
+            <option value="well">negative-peak shift, per well</option>
+            <option value="rep">per-cell compensation from a reporter channel</option>
+          </select>
+          <div id="afRepBox" style="display:none">
+            <div class="row"><label for="afRep">Reporter channel — sees the compound, not the marker</label></div>
+            <select id="afRep"></select>
+          </div>
+          <div class="hint" id="afHint" style="margin-top:6px"></div>
+        </div>
+      </section>
+
+      <section>
+        <div class="sec-h"><span>Concentrations</span><span class="n" id="concNote"></span></div>
+        <select id="concCol"></select>
+        <div class="row"><label for="unit">Unit</label>
+          <select id="unit" style="width:auto">
+            <option>nM</option><option selected>µM</option><option>mM</option><option>µg/mL</option>
+            <option>ng/mL</option><option>Gy</option><option value="">none</option></select></div>
+        <div class="row"><label for="concText">One line per well: <code>well  concentration</code></label></div>
+        <textarea id="concText" spellcheck="false"></textarea>
+        <div class="row"><button class="btn small" id="bConc">Apply</button>
+          <span class="hint">0 or <i>DMSO</i> = control · decimal comma is fine · empty = leave out</span></div>
+      </section>
+
+      <section>
+        <div class="sec-h"><span>Readout per well</span></div>
+        <select id="readout"></select>
+        <div class="row"><label for="kmin">Foci-positive at ≥</label><input type="number" id="kmin" min="1" value="3">
+          <label>foci</label></div>
+        <div class="row"><label for="minCells">Min. cells per population per well</label><input type="number" id="minCells" min="1" value="20"></div>
+        <div class="row"><label for="bins">Distribution bins</label><input type="text" id="bins" value="0, 1-2, 3-5, 6-10, 11+" class="grow"></div>
+      </section>
+
+      <section>
+        <div class="sec-h"><span>Cell-level model</span></div>
+        <select id="mKind">
+          <option value="nb">foci count — negative binomial</option>
+          <option value="logit">foci-positive cells (≥ k) — logistic</option>
+        </select>
+        <div class="row"><label for="mDose">Concentration enters as</label></div>
+        <select id="mDose">
+          <option value="log">log₁₀ concentration (trend)</option>
+          <option value="rank">dose step (equal spacing)</option>
+        </select>
+        <label class="chk" id="adjBox"><input type="checkbox" id="mAdj"> adjust for DNA content (cell cycle)</label>
+      </section>
+    </aside>
+
+    <div class="work">
+      <div id="warnings"></div>
+      <section class="card" id="qcCard">
+        <div class="sec-h"><span>Cell filter</span><span class="n">keep a window on each — like an FSC/SSC gate before you look at fluorescence</span>
+          <button class="btn small" id="qcClear" style="margin-left:auto">clear all</button></div>
+        <div class="qcGrid" id="qcGrid"></div>
+        <div class="hint" id="qcNote" style="margin-top:10px"></div>
+      </section>
+      <section class="card">
+        <div class="sec-h"><span>Foci across the dose series</span><span class="n" id="doseTitle"></span></div>
+        <div class="grid2">
+          <div class="plot"><canvas id="cDose"></canvas>
+            <div class="cap">every dot is one well · line joins the means per concentration</div></div>
+          <div class="plot"><canvas id="cDiff"></canvas>
+            <div class="cap" id="diffCap">difference between the populations, per well</div></div>
+        </div>
+      </section>
+
+      <section class="card" id="afCard">
+        <div class="sec-h"><span>Marker across the dose series</span><span class="n" id="afTitle"></span></div>
+        <div class="grid2">
+          <div class="plot"><canvas id="cRidge"></canvas>
+            <div class="cap" id="ridgeCap"></div></div>
+          <div class="plot"><canvas id="cShift"></canvas>
+            <div class="cap" id="shiftCap"></div></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="sec-h"><span>Distributions</span><span class="n">cells pooled per concentration — for looking, not for testing</span></div>
+        <div class="plot" style="margin-bottom:16px"><canvas id="cSurv"></canvas>
+          <div class="cap">% of nuclei with at least k foci · one line per concentration · a curve shifting right = more foci in more cells</div></div>
+        <div class="plot"><canvas id="cBins"></canvas>
+          <div class="cap">share of nuclei per foci bin · left bar = <span id="capA"></span>, right bar = <span id="capB"></span></div></div>
+      </section>
+
+      <section class="card">
+        <div class="sec-h"><span>Every cell, every well</span><span class="n">SuperPlot</span></div>
+        <div class="plot"><canvas id="cSuper"></canvas>
+          <div class="cap">small dots = nuclei (up to 150 per well and population, jittered) · large dots = well means, the replicates the tests use · √ axis</div></div>
+      </section>
+
+      <section class="card">
+        <div class="sec-h"><span>Statistics — wells as replicates</span><span class="n" id="statTitle"></span></div>
+        <div id="pairOut"></div>
+        <div class="tblScroll" style="margin-top:12px"><table class="tbl" id="tConc"></table></div>
+        <div id="trendOut" style="margin-top:14px"></div>
+      </section>
+
+      <section class="card">
+        <div class="sec-h"><span>Statistics — cell-level model</span><span class="n" id="modelTitle"></span></div>
+        <div class="tblScroll"><table class="tbl" id="tModel"></table></div>
+        <div id="modelOut"></div>
+      </section>
+
+      <section class="card">
+        <div class="sec-h"><span>Wells</span><span class="n" id="wellNote">untick a well to leave it out</span></div>
+        <div class="tblScroll"><table class="tbl" id="tWell"></table></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.inflate.min.js"></script>
+<script>
+// ---- special functions -------------------------------------
+function logGamma(x){
+  const g = [676.5203681218851,-1259.1392167224028,771.32342877765313,
+             -176.61502916214059,12.507343278686905,-0.13857109526572012,
+             9.9843695780195716e-6,1.5056327351493116e-7];
+  if(x < 0.5) return Math.log(Math.PI/Math.sin(Math.PI*x)) - logGamma(1-x);
+  x -= 1;
+  let a = 0.99999999999980993, t = x + 7.5;
+  for(let i=0;i<8;i++) a += g[i]/(x+i+1);
+  return 0.5*Math.log(2*Math.PI) + (x+0.5)*Math.log(t) - t + Math.log(a);
+}
+/** Continued fraction for the incomplete beta (Lentz). */
+function betacf(a,b,x){
+  const FPMIN = 1e-300, EPS = 3e-16;
+  let qab = a+b, qap = a+1, qam = a-1;
+  let c = 1, d = 1 - qab*x/qap;
+  if(Math.abs(d) < FPMIN) d = FPMIN;
+  d = 1/d; let h = d;
+  for(let m=1;m<=300;m++){
+    const m2 = 2*m;
+    let aa = m*(b-m)*x/((qam+m2)*(a+m2));
+    d = 1 + aa*d; if(Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa/c; if(Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1/d; h *= d*c;
+    aa = -(a+m)*(qab+m)*x/((a+m2)*(qap+m2));
+    d = 1 + aa*d; if(Math.abs(d) < FPMIN) d = FPMIN;
+    c = 1 + aa/c; if(Math.abs(c) < FPMIN) c = FPMIN;
+    d = 1/d;
+    const del = d*c; h *= del;
+    if(Math.abs(del-1) < EPS) break;
+  }
+  return h;
+}
+/** Regularised incomplete beta I_x(a,b). */
+function betai(a,b,x){
+  if(x <= 0) return 0;
+  if(x >= 1) return 1;
+  const bt = Math.exp(logGamma(a+b)-logGamma(a)-logGamma(b)+a*Math.log(x)+b*Math.log(1-x));
+  return x < (a+1)/(a+b+2) ? bt*betacf(a,b,x)/a : 1 - bt*betacf(b,a,1-x)/b;
+}
+/** Two-sided p from Student's t. */
+function tTest2sided(t, df){
+  if(!isFinite(t) || !(df > 0)) return NaN;
+  return betai(df/2, 0.5, df/(df + t*t));
+}
+/** Upper tail of the F distribution. */
+function fSF(F, df1, df2){
+  if(!isFinite(F) || F <= 0) return 1;
+  return betai(df2/2, df1/2, df2/(df2 + df1*F));
+}
+/** Chi-square upper tail, via the regularised incomplete gamma. */
+function gammaincUpper(s, x){
+  if(x <= 0) return 1;
+  if(x < s+1){                       // series
+    let sum = 1/s, term = sum;
+    for(let n=1;n<500;n++){ term *= x/(s+n); sum += term;
+      if(Math.abs(term) < Math.abs(sum)*1e-15) break; }
+    return 1 - sum*Math.exp(-x + s*Math.log(x) - logGamma(s));
+  }
+  let b = x+1-s, c = 1e300, d = 1/b, h = d;    // continued fraction
+  for(let i=1;i<500;i++){
+    const an = -i*(i-s);
+    b += 2; d = an*d + b; if(Math.abs(d) < 1e-300) d = 1e-300;
+    c = b + an/c; if(Math.abs(c) < 1e-300) c = 1e-300;
+    d = 1/d; const del = d*c; h *= del;
+    if(Math.abs(del-1) < 1e-15) break;
+  }
+  return Math.exp(-x + s*Math.log(x) - logGamma(s))*h;
+}
+const chi2SF = (x, k) => gammaincUpper(k/2, x/2);
+/** Standard normal CDF, routed through the incomplete gamma so it is accurate
+ *  to ~1e-15 rather than the ~1e-7 of the usual erf polynomial - p-values near
+ *  a decision threshold deserve better than a rational approximation. */
+function normCDF(z){
+  if(z === 0) return 0.5;
+  const half = 0.5*gammaincUpper(0.5, z*z/2);   // = 0.5*erfc(|z|/sqrt2)
+  return z < 0 ? half : 1 - half;
+}
+
+
+// ---- descriptives ------------------------------------------
+const mean = a => a.reduce((x,y)=>x+y,0)/a.length;
+function sd(a){                       // sample SD (n-1)
+  if(a.length < 2) return NaN;
+  const m = mean(a);
+  return Math.sqrt(a.reduce((s,x)=>s+(x-m)*(x-m),0)/(a.length-1));
+}
+const sem = a => sd(a)/Math.sqrt(a.length);
+function median(a){
+  const s = [...a].sort((x,y)=>x-y), n = s.length;
+  return n%2 ? s[(n-1)/2] : 0.5*(s[n/2-1]+s[n/2]);
+}
+function quantile(a,q){
+  const s = [...a].sort((x,y)=>x-y);
+  const p = q*(s.length-1), lo = Math.floor(p), hi = Math.ceil(p);
+  return s[lo] + (s[hi]-s[lo])*(p-lo);
+}
+/** Inverse Student-t by bisection - only needed for CI half-widths. */
+function tCrit(p, df){                // two-sided p, e.g. 0.05
+  let lo = 0, hi = 200;
+  for(let i=0;i<200;i++){ const mid = (lo+hi)/2;
+    if(tTest2sided(mid, df) > p) lo = mid; else hi = mid; }
+  return (lo+hi)/2;
+}
+function ciMean(a, alpha = 0.05){
+  const n = a.length;
+  if(n < 2) return [NaN, NaN];
+  const m = mean(a), h = tCrit(alpha, n-1)*sem(a);
+  return [m-h, m+h];
+}
+
+
+
+/* ---------- statistics specific to the foci workbench -------------------
+   Needs: logGamma, betai, tTest2sided, normCDF, mean, sd, tCrit (shared).
+   Every routine here is checked against scipy / statsmodels. */
+
+/** Average ranks (1-based), ties share the mean rank. Returns {r, tieTerm}. */
+function rankAvg(a){
+  const idx = a.map((v, i) => i).sort((i, j) => a[i] - a[j]);
+  const r = new Array(a.length);
+  let i = 0, tieTerm = 0;
+  while(i < idx.length){
+    let j = i;
+    while(j + 1 < idx.length && a[idx[j + 1]] === a[idx[i]]) j++;
+    const rk = (i + j) / 2 + 1;
+    for(let k = i; k <= j; k++) r[idx[k]] = rk;
+    const t = j - i + 1; if(t > 1) tieTerm += t * t * t - t;
+    i = j + 1;
+  }
+  return { r, tieTerm };
+}
+
+/** Paired t-test on differences d (= b - a). */
+function pairedT(d){
+  const n = d.length;
+  if(n < 2) return { n, mean: n ? d[0] : NaN, lo: NaN, hi: NaN, t: NaN, df: NaN, p: NaN };
+  const m = mean(d), s = sd(d), se = s / Math.sqrt(n);
+  const t = m / se, df = n - 1, h = tCrit(0.05, df) * se;
+  return { n, mean: m, lo: m - h, hi: m + h, t, df, p: se > 0 ? tTest2sided(t, df) : NaN };
+}
+
+/** Wilcoxon signed-rank test, two-sided. Zeros are dropped (Wilcoxon's
+ *  convention, scipy's default). For up to 50 differences the p-value comes
+ *  from the exact sign-flip distribution of the rank sum, computed on doubled
+ *  ranks so that tied (half-integer) ranks are handled exactly; beyond that,
+ *  the normal approximation with tie correction. */
+function wilcoxonSigned(d){
+  const x = d.filter(v => v !== 0 && isFinite(v));
+  const n = x.length;
+  if(n < 1) return { n, W: NaN, p: NaN, method: "" };
+  const { r, tieTerm } = rankAvg(x.map(Math.abs));
+  let Wp = 0, Wm = 0;
+  for(let i = 0; i < n; i++){ if(x[i] > 0) Wp += r[i]; else Wm += r[i]; }
+  const W = Math.min(Wp, Wm);
+  if(n <= 50){
+    const r2 = r.map(v => Math.round(2 * v));          // integers, ties included
+    const max = r2.reduce((a, b) => a + b, 0), cnt = new Float64Array(max + 1); cnt[0] = 1;
+    for(const k of r2) for(let s = max; s >= k; s--) cnt[s] += cnt[s - k];
+    const total = Math.pow(2, n), w2 = Math.round(2 * Wp);
+    let lo = 0, hi = 0;
+    for(let s = 0; s <= max; s++){ if(s <= w2) lo += cnt[s]; if(s >= w2) hi += cnt[s]; }
+    return { n, W, p: Math.min(1, 2 * Math.min(lo, hi) / total), method: "exact" };
+  }
+  const mu = n * (n + 1) / 4;
+  const sig = Math.sqrt(n * (n + 1) * (2 * n + 1) / 24 - tieTerm / 48);
+  const z = (W - mu) / sig;
+  return { n, W, p: sig > 0 ? Math.min(1, 2 * normCDF(-Math.abs(z))) : NaN, method: "normal" };
+}
+
+/** Spearman rank correlation with scipy's t-distribution p-value. */
+function spearman(x, y){
+  const n = x.length;
+  if(n < 3) return { n, rho: NaN, p: NaN };
+  const rx = rankAvg(x).r, ry = rankAvg(y).r;
+  const mx = mean(rx), my = mean(ry);
+  let sxy = 0, sxx = 0, syy = 0;
+  for(let i = 0; i < n; i++){
+    const a = rx[i] - mx, b = ry[i] - my; sxy += a * b; sxx += a * a; syy += b * b;
+  }
+  if(!(sxx > 0 && syy > 0)) return { n, rho: NaN, p: NaN };
+  const rho = sxy / Math.sqrt(sxx * syy);
+  if(Math.abs(rho) >= 1) return { n, rho, p: 0 };
+  const t = rho * Math.sqrt((n - 2) / (1 - rho * rho));
+  return { n, rho, p: tTest2sided(t, n - 2) };
+}
+
+/* ---- generalised linear models with well-clustered standard errors ----
+   Data are given as columns. Rows may carry a frequency weight, which lets
+   a million cells collapse to a few thousand distinct (well, population,
+   count) rows with no change in any estimate. */
+
+function solveSym(A, b){                       // Gauss-Jordan with pivoting
+  const n = b.length, M = A.map((r, i) => [...r, b[i]]);
+  for(let c = 0; c < n; c++){
+    let p = c; for(let r = c + 1; r < n; r++) if(Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    if(Math.abs(M[p][c]) < 1e-14) return null;
+    [M[c], M[p]] = [M[p], M[c]];
+    for(let r = 0; r < n; r++) if(r !== c){
+      const f = M[r][c] / M[c][c];
+      for(let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  return M.map((r, i) => r[n] / r[i]);
+}
+function invSym(A){
+  const n = A.length, out = [];
+  for(let c = 0; c < n; c++){
+    const e = new Array(n).fill(0); e[c] = 1;
+    const col = solveSym(A, e); if(!col) return null; out.push(col);
+  }
+  return out[0].map((_, i) => out.map(r => r[i]));   // transpose
+}
+
+/**
+ * IRLS for a GLM. family "nb" (NB2, log link, fixed alpha) or "logit".
+ * X: array of p Float64Array columns; y, w: Float64Array (w = frequency).
+ */
+function glmIRLS(X, y, w, family, alpha = 0, beta0 = null){
+  const p = X.length, N = y.length;
+  let beta = beta0 ? beta0.slice() : new Array(p).fill(0);
+  if(!beta0 && family === "nb"){
+    let sy = 0, sw = 0; for(let i = 0; i < N; i++){ sy += w[i] * y[i]; sw += w[i]; }
+    beta[0] = Math.log(Math.max(sy / sw, 1e-8));
+  }
+  const eta = new Float64Array(N);
+  let converged = false, it = 0;
+  for(it = 0; it < 100; it++){
+    const A = Array.from({ length: p }, () => new Array(p).fill(0)), b = new Array(p).fill(0);
+    for(let i = 0; i < N; i++){
+      let e = 0; for(let k = 0; k < p; k++) e += X[k][i] * beta[k];
+      eta[i] = e;
+      let mu, W, z;
+      if(family === "nb"){
+        mu = Math.exp(e); W = mu / (1 + alpha * mu); z = e + (y[i] - mu) / mu;
+      } else {
+        mu = 1 / (1 + Math.exp(-e)); const v = Math.max(mu * (1 - mu), 1e-12);
+        W = v; z = e + (y[i] - mu) / v;
+      }
+      const ww = w[i] * W;
+      for(let a = 0; a < p; a++){
+        const xa = X[a][i] * ww; b[a] += xa * z;
+        for(let c = a; c < p; c++) A[a][c] += xa * X[c][i];
+      }
+    }
+    for(let a = 0; a < p; a++) for(let c = 0; c < a; c++) A[a][c] = A[c][a];
+    const nb = solveSym(A, b);
+    if(!nb) return null;
+    let delta = 0; for(let k = 0; k < p; k++) delta = Math.max(delta, Math.abs(nb[k] - beta[k]));
+    beta = nb;
+    if(delta < 1e-10){ converged = true; break; }
+  }
+  return { beta, converged, iterations: it + 1 };
+}
+
+/** NB2 log-likelihood. lgamma(y + 1/a) - lgamma(1/a) is summed as
+ *  sum_{j<y} log(j + 1/a), tabulated once per alpha for integer counts. */
+function nbLogLik(X, y, w, beta, alpha, maxY){
+  const N = y.length, p = X.length, ia = 1 / alpha;
+  const tab = new Float64Array(maxY + 2);
+  for(let j = 1; j <= maxY + 1; j++) tab[j] = tab[j - 1] + Math.log(j - 1 + ia);
+  let ll = 0;
+  for(let i = 0; i < N; i++){
+    let e = 0; for(let k = 0; k < p; k++) e += X[k][i] * beta[k];
+    const mu = Math.exp(e), yi = y[i];
+    ll += w[i] * (tab[yi] - logGamma(yi + 1) - ia * Math.log1p(alpha * mu) +
+                  yi * (Math.log(alpha * mu) - Math.log1p(alpha * mu)));
+  }
+  return ll;
+}
+
+/** Maximum-likelihood NB2 dispersion: golden-section on log(alpha),
+ *  refitting the coefficients by IRLS at each step (profile likelihood). */
+function nbFit(X, y, w){
+  let maxY = 0; for(let i = 0; i < y.length; i++) if(y[i] > maxY) maxY = y[i];
+  const lgCache = new Map();
+  let lastBeta = null;
+  const prof = la => {
+    if(lgCache.has(la)) return lgCache.get(la);
+    const a = Math.exp(la);
+    const f = glmIRLS(X, y, w, "nb", a, lastBeta);
+    if(!f) return { ll: -Infinity };
+    lastBeta = f.beta;
+    const r = { ll: nbLogLik(X, y, w, f.beta, a, maxY), fit: f, alpha: a };
+    lgCache.set(la, r); return r;
+  };
+  let lo = Math.log(1e-6), hi = Math.log(1e3);
+  const g = (Math.sqrt(5) - 1) / 2;
+  let c = hi - g * (hi - lo), d = lo + g * (hi - lo);
+  let fc = prof(c).ll, fd = prof(d).ll;
+  for(let i = 0; i < 80 && hi - lo > 1e-7; i++){
+    if(fc > fd){ hi = d; d = c; fd = fc; c = hi - g * (hi - lo); fc = prof(c).ll; }
+    else       { lo = c; c = d; fc = fd; d = lo + g * (hi - lo); fd = prof(d).ll; }
+  }
+  const best = prof(0.5 * (lo + hi));
+  return { beta: best.fit.beta, alpha: best.alpha, ll: best.ll, converged: best.fit.converged };
+}
+
+/**
+ * Cluster-robust covariance (sandwich) for a fitted GLM, clustered by `g`
+ * (integer cluster id per row), with the CR1 small-sample factor that
+ * statsmodels applies by default: G/(G-1) * (N-1)/(N-K), N = sum of weights.
+ */
+function clusterCov(X, y, w, g, family, alpha, beta){
+  const p = X.length, N = y.length;
+  const A = Array.from({ length: p }, () => new Array(p).fill(0));
+  const U = new Map();
+  let Nw = 0;
+  for(let i = 0; i < N; i++){
+    let e = 0; for(let k = 0; k < p; k++) e += X[k][i] * beta[k];
+    let W, s;
+    if(family === "nb"){
+      // observed information (what statsmodels uses for the bread); with the
+      // non-canonical log link it differs from the IRLS weight mu/(1+a*mu)
+      const mu = Math.exp(e), q = 1 + alpha * mu;
+      W = mu * (1 + alpha * y[i]) / (q * q); s = (y[i] - mu) / q;
+    }
+    else { const mu = 1 / (1 + Math.exp(-e)); W = mu * (1 - mu); s = y[i] - mu; }
+    const ww = w[i] * W; Nw += w[i];
+    let u = U.get(g[i]); if(!u){ u = new Array(p).fill(0); U.set(g[i], u); }
+    for(let a = 0; a < p; a++){
+      u[a] += w[i] * s * X[a][i];
+      for(let c = a; c < p; c++) A[a][c] += ww * X[a][i] * X[c][i];
+    }
+  }
+  for(let a = 0; a < p; a++) for(let c = 0; c < a; c++) A[a][c] = A[c][a];
+  const B = invSym(A); if(!B) return null;
+  const meat = Array.from({ length: p }, () => new Array(p).fill(0));
+  for(const u of U.values()) for(let a = 0; a < p; a++) for(let c = 0; c < p; c++) meat[a][c] += u[a] * u[c];
+  const G = U.size;
+  const fac = G / (G - 1) * (Nw - 1) / (Nw - p);
+  const BM = B.map(r => meat[0].map((_, c) => r.reduce((s, v, k) => s + v * meat[k][c], 0)));
+  const V = BM.map(r => B[0].map((_, c) => fac * r.reduce((s, v, k) => s + v * B[k][c], 0)));
+  return { V, G, N: Nw };
+}
+
+/** Estimate, CI and p for a linear combination L'beta, on the log scale,
+ *  using t with G-1 degrees of freedom (honest with few wells). */
+function linComb(L, beta, V, G){
+  let est = 0, v = 0;
+  for(let a = 0; a < L.length; a++){
+    est += L[a] * beta[a];
+    for(let c = 0; c < L.length; c++) v += L[a] * V[a][c] * L[c];
+  }
+  const se = Math.sqrt(Math.max(v, 0)), df = Math.max(1, G - 1);
+  const h = tCrit(0.05, df) * se;
+  return { est, se, lo: est - h, hi: est + h, t: est / se, df, p: se > 0 ? tTest2sided(est / se, df) : NaN };
+}
+
+
+/* ---------- CSV reading (streamed) ------------------------- */
+/* NF-CSV-READER: identical in gating_explorer.html and condition_explorer.html.
+   Browsers cannot hold a string longer than ~512 MB (Chrome's TextDecoder
+   then silently returns ""), and a per-nucleus table of a full plate easily
+   exceeds that once unzipped. So the file is decompressed, decoded and parsed
+   chunk by chunk, straight into typed columns; the full text never exists. */
+
+// Per-nucleus measurements are stored as 32-bit floats (7 significant digits,
+// far more than any microscope delivers) to halve memory; ids, plate/well
+// metadata, concentrations and everything else keep full 64-bit precision.
+const NF_F32 = /^(mean|median|integrated|foci)_|^(area|perimeter|eccentricity|solidity|x|y)$/;
+const NF_NA = new Set(["", "NA", "NaN", "nan", "N/A", "n/a", "null", "NULL", "None", "#N/A"]);
+
+function csvParser(){
+  const SAMPLE = 500, BLOCK = 1 << 16, MASK = BLOCK - 1;
+  let header = null, ncol = 0, delim = ",";
+  let sample = [], decided = false;
+  let numeric, blocks, cur, text, intern;
+  let n = 0, carry = "";
+
+  const splitQ = line => {                       // quote-aware, for lines that need it
+    const out = []; let f = "", q = false;
+    for(let i = 0; i < line.length; i++){
+      const c = line[i];
+      if(q){ if(c === '"'){ if(line[i+1] === '"'){ f += '"'; i++; } else q = false; } else f += c; }
+      else if(c === '"') q = true;
+      else if(c === delim){ out.push(f); f = ""; }
+      else f += c;
+    }
+    out.push(f); return out;
+  };
+  const fields = line => line.indexOf('"') < 0 ? line.split(delim) : splitQ(line);
+  const toNum = v => {
+    if(v === "True" || v === "true") return 1;
+    if(v === "False" || v === "false") return 0;
+    if(v === "inf") return Infinity;
+    if(v === "-inf") return -Infinity;
+    return NF_NA.has(v) ? NaN : Number(v);
+  };
+  const isNum = v => NF_NA.has(v) || v === "True" || v === "False" || v === "true" ||
+                     v === "false" || v === "inf" || v === "-inf" || (v.trim() !== "" && isFinite(Number(v)));
+
+  function decide(){
+    numeric = header.map(() => true);
+    for(const f of sample)
+      for(let c = 0; c < ncol; c++){
+        const v = f[c];
+        if(numeric[c] && v !== undefined && !isNum(v)) numeric[c] = false;
+      }
+    blocks = header.map(() => []); cur = new Array(ncol);
+    text = header.map((h, c) => numeric[c] ? null : []);
+    intern = header.map(() => new Map());
+    decided = true;
+    const s = sample; sample = null;
+    for(const f of s) addRow(f);
+  }
+  function newBlocks(){
+    for(let c = 0; c < ncol; c++) if(numeric[c]){
+      const a = NF_F32.test(header[c]) ? new Float32Array(BLOCK) : new Float64Array(BLOCK);
+      blocks[c].push(a); cur[c] = a;
+    }
+  }
+  // A column that looked numeric in the first rows but turns out to hold text
+  // further down (e.g. "10" … then "DMSO") becomes a text column, keeping
+  // what was already read instead of silently turning words into NaN.
+  function toText(c){
+    const t = new Array(n);
+    for(let i = 0; i < n; i++){
+      const x = blocks[c][i >>> 16][i & MASK];
+      t[i] = Number.isNaN(x) ? "" : String(x);
+    }
+    numeric[c] = false; blocks[c] = []; cur[c] = null; text[c] = t;
+  }
+  function addRow(f){
+    if((n & MASK) === 0) newBlocks();
+    const k = n & MASK;
+    for(let c = 0; c < ncol; c++){
+      let v = f[c];
+      if(v === undefined) v = "";
+      if(numeric[c]){
+        const x = toNum(v);
+        if(x === x || NF_NA.has(v)){ cur[c][k] = x; continue; }
+        toText(c);
+      }
+      // reuse one copy of repeated labels (well names, compounds, …)
+      const m = intern[c];
+      let s = m.get(v);
+      if(s === undefined){ s = v; if(m.size < 200000) m.set(v, v); }
+      text[c].push(s);
+    }
+    n++;
+  }
+  function line(l){
+    if(l.length && l.charCodeAt(l.length - 1) === 13) l = l.slice(0, -1);
+    if(!l.length || l[0] === "#" || !l.trim()) return;
+    if(!header){
+      if(l.charCodeAt(0) === 0xFEFF) l = l.slice(1);       // Excel's byte-order mark
+      const cnt = d => l.split(d).length;
+      delim = [",", "\t", ";"].reduce((a, d) => cnt(d) > cnt(a) ? d : a, ",");
+      header = fields(l).map(h => h.trim()); ncol = header.length;
+      return;
+    }
+    const f = fields(l);
+    if(!decided){ sample.push(f); if(sample.length >= SAMPLE) decide(); }
+    else addRow(f);
+  }
+  return {
+    get rows(){ return decided ? n : (sample ? sample.length : 0); },
+    push(chunk){
+      const t = carry ? carry + chunk : chunk;
+      let start = 0, nl;
+      while((nl = t.indexOf("\n", start)) >= 0){ line(t.slice(start, nl)); start = nl + 1; }
+      carry = t.slice(start);
+    },
+    finish(){
+      if(carry){ line(carry); carry = ""; }
+      if(!header) throw new Error("That file is empty — no header row was found.");
+      if(!decided) decide();
+      if(!n) throw new Error("That file has a header but no data rows.");
+      const cols = {};
+      header.forEach((h, c) => {
+        if(!numeric[c]){ cols[h] = text[c]; return; }
+        const b = blocks[c], out = new b[0].constructor(n);
+        for(let i = 0; i < b.length; i++){
+          const len = Math.min(BLOCK, n - i * BLOCK);
+          out.set(len === BLOCK ? b[i] : b[i].subarray(0, len), i * BLOCK);
+          b[i] = null;                                   // free as we go
+        }
+        cols[h] = out;
+      });
+      return { header, cols, rows: n };
+    },
+  };
+}
+
+/** Parse a CSV that is already a string (small files, embedded data). */
+function parseCSV(str){ const P = csvParser(); P.push(str); return P.finish(); }
+
+/** Stream a File (plain or .gz) into columns. onProgress(fraction, rows). */
+async function readTable(file, onProgress){
+  const sig = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+  const gz = /\.gz$/i.test(file.name) || (sig[0] === 0x1f && sig[1] === 0x8b);
+  const P = csvParser(), dec = new TextDecoder("utf-8");
+  const total = file.size || 1;
+  let readBytes = 0, tick = performance.now();
+  const step = async bytes => {
+    const s = dec.decode(bytes, { stream: true });
+    if(s) P.push(s);
+    const now = performance.now();
+    if(now - tick > 120){                               // let the page repaint
+      tick = now;
+      if(onProgress) onProgress(Math.min(readBytes / total, 1), P.rows);
+      await new Promise(r => setTimeout(r, 0));
+    }
+  };
+  try{
+    if(gz && typeof DecompressionStream === "function"){
+      const counted = file.stream().pipeThrough(new TransformStream({
+        transform(ch, ctl){ readBytes += ch.byteLength; ctl.enqueue(ch); } }));
+      const rd = counted.pipeThrough(new DecompressionStream("gzip")).getReader();
+      for(;;){ const { done, value } = await rd.read(); if(done) break; await step(value); }
+    } else if(gz){
+      if(typeof pako === "undefined") throw new Error(
+        "This file is gzipped and this browser cannot unzip it offline. Use a current " +
+        "Chrome, Edge or Firefox, or unzip the file first and load the plain .csv.");
+      const out = [];
+      const inf = new pako.Inflate();
+      inf.onData = c => out.push(c);
+      const SL = 8 << 20;
+      for(let o = 0; o < file.size; o += SL){
+        const u = new Uint8Array(await file.slice(o, o + SL).arrayBuffer());
+        readBytes = Math.min(o + SL, file.size);
+        inf.push(u, o + SL >= file.size);
+        if(inf.err) throw new Error("Could not unzip this file: " + inf.msg);
+        while(out.length) await step(out.shift());
+      }
+      if(!inf.ended) throw new TypeError("the compressed data ends early");
+    } else {
+      const rd = file.stream().getReader();
+      for(;;){
+        const { done, value } = await rd.read(); if(done) break;
+        readBytes += value.byteLength; await step(value);
+      }
+    }
+    const rest = dec.decode();
+    if(rest) P.push(rest);
+    if(onProgress) onProgress(1, P.rows);
+    return P.finish();
+  }catch(e){
+    if(e instanceof RangeError || /allocation|out of memory/i.test(e.message || "")){
+      const pct = Math.round(100 * readBytes / total);
+      throw new Error(`The browser ran out of memory after ${P.rows.toLocaleString()} rows ` +
+        `(about ${pct}% of the file). Close other tabs and try again, or load a smaller ` +
+        `table: one plate at a time, or a per-well summary for the analysis tab.`);
+    }
+    if(gz && (e instanceof TypeError || /gzip|decompress|compressed|corrupt|header/i.test(e.message || "")))
+      throw new Error("This .gz file looks damaged or incomplete" +
+        (e.message ? " (" + e.message + ")" : "") +
+        ". Was it still being written or copied when you opened it? Copy it again and reload.");
+    throw e;
+  }
+}
+/* /NF-CSV-READER */
+
+/* ======================================================================
+   State
+   ====================================================================== */
+const S = {
+  name:"", header:[], cols:{}, rows:0,
+  fociCh:[], foci:"", markers:[], marker:null, thr:NaN, popNames:["",""],
+  plates:[], plate:"", wellKeys:[], wellOf:null, wellOff:new Set(),
+  concCands:[], conc:new Map(), unit:"µM",
+  dnaCol:"", dnaLog:null, dnaPeak:NaN, deadCol:"",
+  cellset:"all", exDead:true, readout:"mean", k:3, minCells:20,
+  bins:[[0,0],[1,2],[3,5],[6,10],[11,Infinity]],
+  mKind:"nb", mDose:"log", mAdj:false,
+  pop:null, active:null, agg:null, wells:[], levels:[], model:null,
+  af:"none", afRep:"", mk:null, mkKey:"", afInfo:null, peakCache:null,
+  dapiCh:"", qcKeys:[], qc:{}, qcKeep:null, qcSig:"", plateIdx:null,
+};
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const HMAX = 401;                         // count histogram size; last bin = 400+
+
+function toast(msg, ms = 4500){
+  const t = $("toast"); t.innerHTML = msg; t.style.display = "block";
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = "none", ms);
+}
+function fmt(v, d = 2){
+  if(v === undefined || v === null || !isFinite(v)) return "—";
+  const a = Math.abs(v);
+  if(a !== 0 && (a < 1e-3 || a >= 1e5)) return v.toExponential(2);
+  return v.toFixed(a >= 100 ? 0 : a >= 10 ? Math.min(d, 1) : d);
+}
+function fmtP(p){
+  if(!isFinite(p)) return "—";
+  return p < 1e-4 ? p.toExponential(1) : p.toFixed(4);
+}
+const sigCls = p => isFinite(p) && p < 0.05 ? "sig y" : "sig n";
+function fmtConc(c){
+  if(!isFinite(c)) return "—";
+  if(c === 0) return "0";
+  const a = Math.abs(c);
+  return a >= 1e5 || a < 1e-4 ? c.toExponential(1) : +c.toPrecision(3) + "";
+}
+const unitS = () => S.unit ? " " + S.unit : "";
+function cmpWell(a, b){
+  const ra = /^(.*?)([A-Z]+)(\d+)$/i.exec(a), rb = /^(.*?)([A-Z]+)(\d+)$/i.exec(b);
+  if(ra && rb){
+    if(ra[1] !== rb[1]) return ra[1].localeCompare(rb[1]);
+    return ra[2] === rb[2] ? (+ra[3]) - (+rb[3]) : ra[2].localeCompare(rb[2]);
+  }
+  return String(a).localeCompare(String(b));
+}
+/** "10 µM", "0,5", "1e-3", "DMSO" -> number (controls -> 0, junk -> NaN) */
+function parseConc(v){
+  if(typeof v === "number") return v;
+  const s = String(v ?? "").trim();
+  if(!s) return NaN;
+  if(/^(dmso|vehicle|ctrl|control|untreated|mock|neg|none|medium|nt)$/i.test(s)) return 0;
+  const m = /[-+]?(\d+[.,]?\d*|[.,]\d+)(e[-+]?\d+)?/i.exec(s);
+  return m ? Number(m[0].replace(",", ".")) : NaN;
+}
+
+/* ======================================================================
+   Detect the file's shape
+   ====================================================================== */
+function detect(){
+  const h = S.header, C = S.cols;
+  if(!h.includes("well")) throw new Error("No 'well' column — this needs the per-nucleus table from the pipeline.");
+  S.fociCh = h.filter(c => /^foci_n_/.test(c)).map(c => c.slice(7));
+  if(!S.fociCh.length) throw new Error("No foci columns (foci_n_…) in this file. " +
+    "Run the pipeline with --foci-channel to count foci, then load its per_nucleus_measurements file.");
+  S.foci = S.fociCh[0];
+
+  // nuclear stain: never offered as a marker
+  const dapi = new Set();
+  if(C.dapi_channel) for(let i = 0; i < Math.min(S.rows, 2000); i++) dapi.add(String(C.dapi_channel[i]));
+  const isDapi = ch => dapi.has(ch) || (!dapi.size && /dapi|hoechst|dna|nuc/i.test(ch));
+  S.markers = [];
+  for(const c of h){
+    const m = /^(mean|median)_(.+)$/.exec(c);
+    if(m && ArrayBuffer.isView(C[c]) && !isDapi(m[2]))
+      S.markers.push({ key:c, label:`${m[2]} — ${m[1]} intensity`, ch:m[2], kind:"int" });
+  }
+  for(const c of h) if(/^pos_/.test(c) && ArrayBuffer.isView(C[c]))
+    S.markers.push({ key:c, label:`${c.slice(4)} — pipeline's positive call`, ch:c.slice(4), kind:"pos" });
+  if(!S.markers.length) throw new Error("No marker intensity columns (mean_… / median_…) besides the nuclear stain.");
+  // prefer a marker that is not the foci channel itself
+  S.marker = S.markers.find(m => m.kind === "int" && m.ch !== S.foci && m.key.startsWith("mean_"))
+          || S.markers[0];
+
+  // wells and plates
+  const pl = C.plate;
+  S.plates = pl ? [...new Set(Array.from({length:S.rows}, (_, i) => String(pl[i])))] : [""];
+  S.plate = S.plates[0];
+
+  // DNA content: integrated nuclear stain
+  const dch = [...dapi][0];
+  S.dapiCh = dch || (S.header.map(c => (/^mean_(.+)$/.exec(c) || [])[1]).find(c => c && isDapi(c)) || "");
+  S.dnaCol = (dch && h.includes(`integrated_${dch}`)) ? `integrated_${dch}`
+           : (h.find(c => /^integrated_/.test(c) && isDapi(c.slice(11))) || "");
+  S.deadCol = h.includes("dead") ? "dead" : "";
+
+  // concentration candidates: one value per well, at least two values overall
+  S.concCands = [];
+  const skip = /^(mean|median|integrated|foci|pos)_|^(well|plate|label|x|y|field|image_id|image_name|well_row|well_col|area|perimeter|eccentricity|solidity|dead|dapi_channel|n_positive|population|combination)$/;
+  const firstOfWell = new Map();
+  for(let i = 0; i < S.rows; i++){ const w = String(C.well[i]); if(!firstOfWell.has(w)) firstOfWell.set(w, i); }
+  for(const c of h){
+    if(skip.test(c)) continue;
+    const vals = new Set(); let ok = 0;
+    for(const i of firstOfWell.values()){ const v = parseConc(C[c][i]); if(isFinite(v)){ vals.add(v); ok++; } }
+    if(vals.size >= 2 && ok >= firstOfWell.size * 0.5) S.concCands.push(c);
+  }
+  const score = c => (/conc|dose|treat|drug|cytost/i.test(c) ? 0 : 2) + (c.startsWith("kv_") ? 0 : 1);
+  S.concCands.sort((a, b) => score(a) - score(b));
+}
+
+/* ======================================================================
+   Wells, concentrations, cells
+   ====================================================================== */
+function buildWells(){
+  const C = S.cols, pl = C.plate;
+  const key = new Map(); const keys = [];
+  S.wellOf = new Int32Array(S.rows).fill(-1);
+  for(let i = 0; i < S.rows; i++){
+    if(pl && S.plate !== "*" && String(pl[i]) !== S.plate) continue;
+    const w = (pl && S.plate === "*") ? `${pl[i]}:${C.well[i]}` : String(C.well[i]);
+    let k = key.get(w);
+    if(k === undefined){ k = keys.length; key.set(w, k); keys.push(w); }
+    S.wellOf[i] = k;
+  }
+  // stable, plate-ordered numbering
+  const order = keys.map((w, i) => i).sort((a, b) => cmpWell(keys[a], keys[b]));
+  const remap = new Int32Array(keys.length); order.forEach((old, nw) => remap[old] = nw);
+  for(let i = 0; i < S.rows; i++) if(S.wellOf[i] >= 0) S.wellOf[i] = remap[S.wellOf[i]];
+  S.wellKeys = order.map(i => keys[i]);
+  let np = 0; for(let i = 0; i < S.rows; i++) if(S.wellOf[i] >= 0) np++;
+  S.plateIdx = new Int32Array(np); np = 0;
+  for(let i = 0; i < S.rows; i++) if(S.wellOf[i] >= 0) S.plateIdx[np++] = i;
+  S.wellFirst = new Int32Array(S.wellKeys.length).fill(-1);
+  for(let i = 0; i < S.rows; i++){ const w = S.wellOf[i]; if(w >= 0 && S.wellFirst[w] < 0) S.wellFirst[w] = i; }
+}
+function concFromColumn(col){
+  S.conc = new Map();
+  if(!col) return;
+  const v = S.cols[col];
+  S.wellKeys.forEach((w, k) => { const c = parseConc(v[S.wellFirst[k]]); if(isFinite(c)) S.conc.set(w, c); });
+  const g = /n[Mm]\b|_nm$/.test(col) ? "nM" : /u[Mm]\b|µ[Mm]|_um$/i.test(col) ? "µM" : /m[Mm]\b|_mm$/.test(col) ? "mM" : null;
+  if(g){ S.unit = g; $("unit").value = g; }
+}
+function concToText(){
+  $("concText").value = S.wellKeys.map(w => `${w}\t${S.conc.has(w) ? fmtConcRaw(S.conc.get(w)) : ""}`).join("\n");
+}
+const fmtConcRaw = c => +c.toPrecision(6) + "";
+function concFromText(){
+  const next = new Map(), bad = [];
+  const known = new Set(S.wellKeys);
+  for(const raw of $("concText").value.split(/\n/)){
+    const line = raw.trim(); if(!line || line.startsWith("#")) continue;
+    const m = /^(\S+)[\s;,:=]+(.+)$/.exec(line) || /^(\S+)$/.exec(line);
+    if(!m){ bad.push(line); continue; }
+    let w = m[1].replace(/[;,:]$/, "");
+    if(!known.has(w)){                                     // A1 vs A01
+      const r = /^(.*?)([A-Z]+)0*(\d+)$/i.exec(w);
+      const alt = r && S.wellKeys.find(k => { const q = /^(.*?)([A-Z]+)0*(\d+)$/i.exec(k);
+        return q && q[1] === r[1] && q[2].toUpperCase() === r[2].toUpperCase() && +q[3] === +r[3]; });
+      if(alt) w = alt; else { bad.push(line); continue; }
+    }
+    if(m[2] === undefined || !m[2].trim()) continue;       // well with no value: left out
+    const c = parseConc(m[2]);
+    if(isFinite(c)) next.set(w, c); else bad.push(line);
+  }
+  S.conc = next;
+  if(bad.length) toast(`<b>${bad.length} line${bad.length > 1 ? "s" : ""} not understood</b> and ignored: ` +
+    esc(bad.slice(0, 4).join(" · ")) + (bad.length > 4 ? " …" : ""));
+}
+
+/* ======================================================================
+   Cell filter (QC windows): nuclear stain intensity and morphology.
+   Cells outside any active window leave the analysis entirely - the gate,
+   the autofluorescence calibration, the plots and every statistic.
+   ====================================================================== */
+const MORPH_META = {
+  area:        { label:"nuclear area",  unit:"px",  log:false },
+  eccentricity:{ label:"eccentricity",  unit:"0–1", log:false },
+  solidity:    { label:"solidity",      unit:"0–1", log:false },
+  perimeter:   { label:"perimeter",     unit:"px",  log:false },
+};
+const asinhC = (x, c) => Math.asinh(x / c);
+function cofactorOf(vals, idx){
+  const s = [], step = Math.max(1, Math.floor(idx.length / 4000));
+  for(let i = 0; i < idx.length; i += step){ const v = Math.abs(vals[idx[i]]); if(isFinite(v)) s.push(v); }
+  if(!s.length) return 1;
+  s.sort((a, b) => a - b);
+  return Math.max(1, 0.5 * s[Math.floor(s.length * 0.25)]);
+}
+function detectQC(){
+  const keys = [];
+  if(S.dapiCh && S.cols[`mean_${S.dapiCh}`])
+    keys.push({ key:`mean_${S.dapiCh}`, label:S.dapiCh, kind:"nuclear stain", log:true });
+  for(const m of Object.keys(MORPH_META))
+    if(S.cols[m] && ArrayBuffer.isView(S.cols[m])) keys.push({ key:m, label:MORPH_META[m].label, kind:MORPH_META[m].unit, log:false });
+  // pan-nuclear gamma-H2AX: uniformly bright nuclei whose texture is not foci
+  for(const ch of S.fociCh)
+    if(S.cols[`mean_${ch}`] && ArrayBuffer.isView(S.cols[`mean_${ch}`]))
+      keys.push({ key:`mean_${ch}`, label:`${ch} mean — pan-nuclear`, kind:"foci channel", log:true, pan:ch });
+  S.qcKeys = keys;
+  const prev = S.qc || {}; S.qc = {};
+  for(const k of keys){
+    const v = S.cols[k.key]; let lo = Infinity, hi = -Infinity;
+    for(let i = 0; i < S.rows; i++){ const x = v[i]; if(isFinite(x)){ if(x < lo) lo = x; if(x > hi) hi = x; } }
+    if(!(hi > lo)){ lo = 0; hi = 1; }
+    S.qc[k.key] = prev[k.key] ? { ...prev[k.key], min:lo, max:hi } : { on:false, lo, hi, min:lo, max:hi };
+  }
+}
+/** Robust window: the central 98% of the cells on this plate. */
+function autoWindow(col){
+  const v = S.cols[col], src = S.plateIdx, s = [];
+  const step = Math.max(1, Math.floor(src.length / 20000));
+  for(let i = 0; i < src.length; i += step){ const x = v[src[i]]; if(isFinite(x)) s.push(x); }
+  if(s.length < 20) return null;
+  s.sort((a, b) => a - b);
+  return [s[Math.floor(s.length * 0.01)], s[Math.floor(s.length * 0.99)]];
+}
+function buildQCKeep(){
+  const on = S.qcKeys.filter(k => S.qc[k.key].on);
+  const sig = on.map(k => `${k.key}:${S.qc[k.key].lo}:${S.qc[k.key].hi}`).join("|");
+  if(sig === S.qcSig && (S.qcKeep || !on.length)) return;
+  S.qcSig = sig;
+  S.gate = null;                                    // the gate histogram shows the filtered cells
+  S.qcKeepNoPan = null;
+  if(!on.length){ S.qcKeep = null; return; }
+  const pass = list => { const keep = new Uint8Array(S.rows), cols = list.map(k => [S.cols[k.key], S.qc[k.key].lo, S.qc[k.key].hi]);
+    for(let i = 0; i < S.rows; i++){ let ok = 1;
+      for(const [v, lo, hi] of cols){ const x = v[i]; if(!(x >= lo && x <= hi)){ ok = 0; break; } }
+      keep[i] = ok; }
+    return keep; };
+  S.qcKeep = pass(on);
+  // the same filter without the pan-nuclear window: the denominator for "% pan-nuclear"
+  if(on.some(k => k.pan)) S.qcKeepNoPan = pass(on.filter(k => !k.pan));
+}
+const qcOK = i => !S.qcKeep || S.qcKeep[i] === 1;
+const fmtQ = v => !isFinite(v) ? "" : Math.abs(v) >= 100 ? v.toFixed(0) : v.toPrecision(3);
+
+function buildQCUI(){
+  const box = $("qcGrid");
+  $("qcCard").style.display = S.qcKeys.length ? "" : "none";
+  box.innerHTML = S.qcKeys.map(k => `
+    <div class="qc off" data-qc="${esc(k.key)}">
+      <div class="qc-h"><span class="nm">${esc(k.label)}</span><span class="kind">${esc(k.kind)}</span><span class="sw" title="switch this window on or off"></span></div>
+      <div class="rangeWrap"><canvas></canvas></div>
+      <div class="lims"><input data-lo="${esc(k.key)}" disabled><input data-hi="${esc(k.key)}" disabled></div>
+    </div>`).join("");
+  box.querySelectorAll("[data-qc]").forEach(el => {
+    const key = el.dataset.qc;
+    el.querySelector(".sw").onclick = () => {
+      const q = S.qc[key]; q.on = !q.on;
+      if(q.on && q.lo === q.min && q.hi === q.max){ const w = autoWindow(key); if(w){ q.lo = w[0]; q.hi = w[1]; } }
+      syncQC(); buildReadoutOptions(); refresh();
+    };
+    attachRange(el.querySelector(".rangeWrap"), key);
+  });
+  box.querySelectorAll("[data-lo],[data-hi]").forEach(inp => {
+    inp.onchange = () => {
+      const key = inp.dataset.lo || inp.dataset.hi, v = Number(inp.value.replace(",", "."));
+      if(!isFinite(v)){ syncQC(); return; }
+      const q = S.qc[key];
+      if(inp.dataset.lo) q.lo = Math.min(v, q.hi); else q.hi = Math.max(v, q.lo);
+      refresh();
+    };
+  });
+  syncQC();
+}
+function syncQC(){
+  for(const k of S.qcKeys){
+    const el = $("qcGrid").querySelector(`[data-qc="${CSS.escape(k.key)}"]`); if(!el) continue;
+    const q = S.qc[k.key];
+    el.classList.toggle("on", q.on); el.classList.toggle("off", !q.on);
+    const lo = el.querySelector("[data-lo]"), hi = el.querySelector("[data-hi]");
+    lo.disabled = hi.disabled = !q.on;
+    if(document.activeElement !== lo) lo.value = fmtQ(q.lo);
+    if(document.activeElement !== hi) hi.value = fmtQ(q.hi);
+  }
+}
+function attachRange(wrap, key){
+  let grab = null;
+  const posOf = ev => { const r = wrap.getBoundingClientRect(); return (ev.clientX - r.left) / r.width; };
+  const move = ev => {
+    const g = wrap._g; if(!g) return;
+    const a = g.lo + (g.hi - g.lo) * Math.max(0, Math.min(1, posOf(ev)));
+    const v = g.inv(a), q = S.qc[key];
+    if(grab === "lo") q.lo = Math.min(v, q.hi); else q.hi = Math.max(v, q.lo);
+    syncQC(); cancelAnimationFrame(attachRange.raf); attachRange.raf = requestAnimationFrame(() => refresh());
+  };
+  const up = () => { grab = null; document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up); refresh(); };
+  wrap.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    const q = S.qc[key];
+    if(!q.on){ q.on = true; const w = autoWindow(key); if(w && q.lo === q.min && q.hi === q.max){ q.lo = w[0]; q.hi = w[1]; } syncQC(); buildReadoutOptions(); }
+    const g = wrap._g; if(!g) return;
+    const x = g.lo + (g.hi - g.lo) * posOf(e);
+    grab = Math.abs(x - g.fwd(q.lo)) <= Math.abs(x - g.fwd(q.hi)) ? "lo" : "hi";
+    move(e);
+    document.addEventListener("pointermove", move); document.addEventListener("pointerup", up);
+  });
+}
+/** QC histograms show every cell on the plate, not the filtered set -
+ *  otherwise a distribution would shift as you drag its own window. */
+function drawRange(k){
+  const el = $("qcGrid").querySelector(`[data-qc="${CSS.escape(k.key)}"]`); if(!el) return;
+  const wrap = el.querySelector(".rangeWrap"), c = wrap.querySelector("canvas");
+  const W = wrap.clientWidth, H = wrap.clientHeight, dpr = devicePixelRatio || 1;
+  if(!W) return;
+  c.width = W * dpr; c.height = H * dpr;
+  const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  const vals = S.cols[k.key], src = S.plateIdx;
+  const ckey = [S.plate, k.key, W].join("|");
+  let cache = wrap._bins;
+  if(!cache || cache.key !== ckey){
+    let fwd, inv;
+    if(k.log){ const cf = cofactorOf(vals, src); fwd = x => asinhC(x, cf); inv = a => cf * Math.sinh(a); }
+    else { fwd = x => x; inv = a => a; }
+    const st = Math.max(1, Math.floor(src.length / 40000)), smp = [];
+    for(let i = 0; i < src.length; i += st){ const a = fwd(vals[src[i]]); if(isFinite(a)) smp.push(a); }
+    smp.sort((a, b) => a - b);
+    let lo = smp[Math.floor(smp.length * 0.001)] ?? 0, hi = smp[Math.floor(smp.length * 0.999)] ?? 1;
+    if(!(hi > lo)){ lo = smp[0] ?? 0; hi = (smp[smp.length - 1] ?? 1); if(!(hi > lo)) hi = lo + 1; }
+    const padA = (hi - lo) * 0.03; lo -= padA; hi += padA;
+    const NB = Math.max(48, Math.floor(W / 2.4)), hist = new Float64Array(NB);
+    for(let j = 0; j < src.length; j++){ const a = fwd(vals[src[j]]); if(!isFinite(a)) continue;
+      const b = Math.floor((a - lo) / (hi - lo) * NB); if(b >= 0 && b < NB) hist[b]++; }
+    let mx = 0; for(const v of hist) if(v > mx) mx = v;
+    cache = { key:ckey, lo, hi, fwd, inv, hist, NB, mx:mx || 1 }; wrap._bins = cache;
+  }
+  const { lo, hi, fwd, inv, hist, NB, mx } = cache;
+  wrap._g = { lo, hi, fwd, inv };
+  const q = S.qc[k.key];
+  const xLo = (fwd(q.lo) - lo) / (hi - lo) * W, xHi = (fwd(q.hi) - lo) / (hi - lo) * W, bw = W / NB;
+  for(let b = 0; b < NB; b++){
+    const h = hist[b] / mx * (H - 9), x = b * bw, inside = !q.on || (x + bw / 2 >= xLo && x + bw / 2 <= xHi);
+    g.fillStyle = inside ? (k.log ? "#5B8FF9" : "#7B96B0") : "#3A4A6088";
+    g.fillRect(x, H - h - 1, Math.max(bw - 0.4, 0.6), h);
+  }
+  if(q.on){
+    g.fillStyle = "rgba(11,16,23,.55)"; g.fillRect(0, 0, Math.max(0, xLo), H); g.fillRect(xHi, 0, Math.max(0, W - xHi), H);
+    g.strokeStyle = css("--acc"); g.lineWidth = 1.5;
+    for(const x of [xLo, xHi]){ g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
+    g.fillStyle = css("--acc"); for(const x of [xLo, xHi]) g.fillRect(x - 2.5, 0, 5, 4);
+  }
+}
+function drawQC(){
+  if(!S.qcKeys.length) return;
+  for(const k of S.qcKeys) drawRange(k);
+  const on = S.qcKeys.filter(k => S.qc[k.key].on);
+  const pre = S.plateIdx.length;
+  let post = pre; if(S.qcKeep){ post = 0; for(const i of S.plateIdx) post += S.qcKeep[i]; }
+  $("qcNote").innerHTML = on.length
+    ? `<b style="color:var(--ink)">${post.toLocaleString()}</b> of ${pre.toLocaleString()} nuclei on this plate pass (${(100 * post / pre).toFixed(1)}%) — ${(pre - post).toLocaleString()} removed by ${on.map(k => esc(k.label)).join(", ")}`
+    : `no filter — all ${pre.toLocaleString()} nuclei on this plate go through. Switch on a window to exclude debris, clumps or dying nuclei.`;
+}
+
+/** DNA content: find the 2N peak so G1 / G2 can be selected. */
+function buildDNA(){
+  S.dnaLog = null; S.dnaPeak = NaN;
+  if(!S.dnaCol) return;
+  const v = S.cols[S.dnaCol], L = new Float32Array(S.rows);
+  const xs = [];
+  for(let i = 0; i < S.rows; i++){
+    const x = v[i] > 0 ? Math.log2(v[i]) : NaN; L[i] = x;
+    if(S.wellOf[i] >= 0 && isFinite(x) && (i % 7 === 0 || S.rows < 50000)) xs.push(x);
+  }
+  S.dnaLog = L;
+  if(xs.length < 50) return;
+  xs.sort((a, b) => a - b);
+  const lo = xs[Math.floor(xs.length * 0.005)], hi = xs[Math.floor(xs.length * 0.995)];
+  const NB = 160, hist = new Float64Array(NB), bw = (hi - lo) / NB;
+  for(const x of xs){ const b = Math.floor((x - lo) / bw); if(b >= 0 && b < NB) hist[b]++; }
+  const sm = hist.map((_, b) => { let s = 0, n = 0; for(let d = -3; d <= 3; d++){ const j = b + d; if(j >= 0 && j < NB){ s += hist[j]; n++; } } return s / n; });
+  let m = 0; for(let b = 1; b < NB; b++) if(sm[b] > sm[m]) m = b;
+  // if the tallest peak is 4N (a G2 arrest), the 2N peak sits one doubling lower
+  const below = Math.round(m - 1 / bw);
+  if(below >= 0){
+    let mb = below; for(let b = Math.max(0, below - Math.round(0.2 / bw)); b <= Math.min(NB - 1, below + Math.round(0.2 / bw)); b++) if(sm[b] > sm[mb]) mb = b;
+    if(sm[mb] > 0.25 * sm[m]) m = mb;
+  }
+  S.dnaPeak = lo + (m + 0.5) * bw;
+  S.dnaHist = { lo, bw, sm };
+}
+const G1W = 0.35;                               // ± log2 units around the peak
+
+/* ======================================================================
+   Autofluorescence correction
+   A fluorescent compound (doxorubicin, daunorubicin, mitoxantrone, …)
+   adds signal to the marker channel that grows with dose, so marker-
+   negative nuclei drift across a fixed threshold. Both models below are
+   ADDITIVE in raw intensity, which is how autofluorescence adds up.
+   ====================================================================== */
+
+/** Location of the marker-NEGATIVE peak: the lowest prominent mode of the
+ *  log-intensity histogram of one well. Returned in raw intensity units. */
+function negPeak(logs){
+  const n = logs.length;
+  if(n < 40) return NaN;
+  logs.sort((a, b) => a - b);
+  const lo = logs[Math.floor(n * 0.01)], hi = logs[Math.floor(n * 0.99)];
+  if(!(hi > lo)) return Math.pow(10, lo);
+  const NB = 60, bw = (hi - lo) / NB, h = new Float64Array(NB);
+  for(const x of logs){ const b = Math.floor((x - lo) / bw); if(b >= 0 && b < NB) h[b]++; }
+  const sm = h.map((_, b) => { let s = 0, c = 0; for(let d = -2; d <= 2; d++){ const j = b + d; if(j >= 0 && j < NB){ s += h[j]; c++; } } return s / c; });
+  const mx = Math.max(...sm);
+  for(let b = 0; b < NB; b++){
+    const l = b ? sm[b - 1] : -1, r = b < NB - 1 ? sm[b + 1] : -1;
+    if(sm[b] >= l && sm[b] >= r && sm[b] >= 0.2 * mx) return Math.pow(10, lo + (b + 0.5) * bw);
+  }
+  return Math.pow(10, lo + (sm.indexOf(mx) + 0.5) * bw);
+}
+/** Pool-adjacent-violators: the best non-decreasing fit to (x, y). */
+function isotonic(xs, ys){
+  const o = xs.map((x, i) => i).filter(i => isFinite(xs[i]) && isFinite(ys[i])).sort((a, b) => xs[a] - xs[b]);
+  const blocks = [];                                  // equal x pooled first
+  for(const i of o){
+    const last = blocks[blocks.length - 1];
+    if(last && last.x === xs[i]){ last.s += ys[i]; last.w++; }
+    else blocks.push({ x:xs[i], s:ys[i], w:1, xsAll:[xs[i]] });
+  }
+  const st = [];
+  for(const b of blocks){
+    st.push({ s:b.s, w:b.w, xs:[b.x] });
+    while(st.length > 1 && st[st.length - 2].s / st[st.length - 2].w > st[st.length - 1].s / st[st.length - 1].w){
+      const t = st.pop(), u = st[st.length - 1]; u.s += t.s; u.w += t.w; u.xs.push(...t.xs);
+    }
+  }
+  const fit = new Map();
+  for(const b of st) for(const x of b.xs) fit.set(x, b.s / b.w);
+  return fit;
+}
+const medianOf = a => { const f = a.filter(isFinite).sort((x, y) => x - y), n = f.length;
+  return n ? (n % 2 ? f[(n - 1) / 2] : 0.5 * (f[n / 2 - 1] + f[n / 2])) : NaN; };
+
+/** Negative-peak position (and reporter median) per well, cached. */
+function wellPeaks(){
+  const m = S.marker, key = `${m.key}|${S.plate}|${S.afRep}|${S.qcSig}`;
+  if(S.peakCache && S.peakCache.key === key) return S.peakCache;
+  const v = S.cols[m.key], W = S.wellKeys.length;
+  const logs = Array.from({ length: W }, () => []);
+  for(let i = 0; i < S.rows; i++){ const w = S.wellOf[i]; if(w >= 0 && v[i] > 0 && qcOK(i)) logs[w].push(Math.log10(v[i])); }
+  const peak = logs.map(negPeak);
+  let rmed = null;
+  if(S.afRep && S.cols[S.afRep]){
+    const r = S.cols[S.afRep], per = Array.from({ length: W }, () => []);
+    for(let i = 0; i < S.rows; i++){ const w = S.wellOf[i]; if(w >= 0 && isFinite(r[i]) && qcOK(i)) per[w].push(r[i]); }
+    rmed = per.map(medianOf);
+  }
+  return (S.peakCache = { key, peak, rmed });
+}
+/** Build the (corrected) marker values used for gating. */
+function buildMarker(){
+  const m = S.marker;
+  if(m.kind === "pos"){ S.mk = null; S.afInfo = null; return; }
+  const P = wellPeaks(), W = S.wellKeys.length;
+  // reference: wells at the lowest concentration (the control, if there is one)
+  const cs = S.wellKeys.map(w => S.conc.has(w) ? S.conc.get(w) : NaN);
+  const cmin = Math.min(...cs.filter(isFinite));
+  const refW = cs.map((c, k) => c === cmin ? k : -1).filter(k => k >= 0);
+  const ref = medianOf(refW.map(k => P.peak[k]));
+  const shift = P.peak.map(p => p - ref);
+  // monotone fit of the shift against concentration, for diagnostics and "iso"
+  const iso = isotonic(cs, shift);
+  const info = { ref, shift, cs, iso, refW, cmin, mode:S.af, k:NaN, rref:NaN, dR:null };
+  const off = new Float64Array(W);
+  if(S.af === "well") for(let k = 0; k < W; k++){
+    off[k] = isFinite(shift[k]) ? shift[k] : (iso.has(cs[k]) ? iso.get(cs[k]) : 0); }
+  if(S.af === "iso") for(let k = 0; k < W; k++) off[k] = iso.has(cs[k]) ? iso.get(cs[k]) : (isFinite(shift[k]) ? shift[k] : 0);
+  if(S.af === "rep" && S.cols[S.afRep]) Object.assign(info, calibrateReporter(cs, refW));
+  S.afInfo = info;
+  const offKey = S.af === "none" ? "none" : S.af === "rep" ? `rep${info.k}` : Array.from(off, x => x.toFixed(3)).join(",");
+  const key = `${m.key}|${S.plate}|${S.af}|${offKey}|${S.qcSig}`;
+  if(S.mkKey === key) return;
+  const v = S.cols[m.key];
+  if(S.af === "none"){ S.mk = null; }
+  else {
+    const mk = new Float32Array(S.rows);
+    if(S.af === "rep"){
+      const r = S.cols[S.afRep], k = info.k, rr = info.rref;
+      for(let i = 0; i < S.rows; i++) mk[i] = v[i] - (isFinite(r[i]) ? k * (r[i] - rr) : 0);
+    } else for(let i = 0; i < S.rows; i++){ const w = S.wellOf[i]; mk[i] = w >= 0 ? v[i] - off[w] : v[i]; }
+    S.mk = mk;
+  }
+  S.mkKey = key; S.gate = null;
+}
+const markerValues = () => S.mk || S.cols[S.marker.key];
+
+/**
+ * Spill-over coefficient k for  marker = true + k * (reporter - baseline),
+ * calibrated on the cells themselves. Cells from every well are binned by
+ * reporter intensity; in each bin a LOW quantile of the marker is taken,
+ * which then describes marker-negative cells only (provided negatives make
+ * up more than that quantile of every bin). How that quantile rises with the
+ * reporter is the slope k (Theil-Sen, robust to odd bins). Because the
+ * quantile and the slope are both computed on cells, uptake differing from
+ * cell to cell is no problem - that is the point of a per-cell correction.
+ */
+function calibrateReporter(cs, refW){
+  const m = S.cols[S.marker.key], r = S.cols[S.afRep];
+  const inc = new Uint8Array(S.wellKeys.length), isRef = new Uint8Array(S.wellKeys.length);
+  cs.forEach((c, k) => inc[k] = isFinite(c) ? 1 : 0); refW.forEach(k => isRef[k] = 1);
+  let n = 0; for(let i = 0; i < S.rows; i++){ const w = S.wellOf[i]; if(w >= 0 && inc[w] && isFinite(r[i]) && isFinite(m[i]) && qcOK(i)) n++; }
+  const step = Math.max(1, Math.floor(n / 200000));
+  const R = [], M = [], refR = [], refL = [];
+  let j = 0;
+  for(let i = 0; i < S.rows; i++){
+    const w = S.wellOf[i]; if(w < 0 || !inc[w] || !isFinite(r[i]) || !isFinite(m[i]) || !qcOK(i)) continue;
+    if(isRef[w]){ refR.push(r[i]); if(m[i] > 0) refL.push(Math.log10(m[i])); }
+    if((j++) % step === 0){ R.push(r[i]); M.push(m[i]); }
+  }
+  const rref = medianOf(refR);
+  // share of negatives in the reference wells (no compound there) sets the quantile
+  refL.sort((a, b) => a - b);
+  const tRef = otsu(refL);
+  const negFrac = refL.length ? refL.filter(x => x <= tRef).length / refL.length : 0.5;
+  const q = Math.min(0.25, Math.max(0.05, 0.5 * negFrac));
+  // equal-count bins along the reporter
+  const order = R.map((_, i) => i).sort((a, b) => R[a] - R[b]);
+  const NB = Math.min(40, Math.floor(order.length / 60));
+  const bx = [], by = [];
+  for(let b = 0; b < NB; b++){
+    const ids = order.slice(Math.floor(b * order.length / NB), Math.floor((b + 1) * order.length / NB));
+    if(ids.length < 50) continue;
+    const ms = ids.map(i => M[i]).sort((a, c) => a - c);
+    bx.push(medianOf(ids.map(i => R[i])) - rref);
+    by.push(ms[Math.floor(q * (ms.length - 1))]);
+  }
+  // Theil-Sen slope over the bins
+  const sl = [];
+  for(let a = 0; a < bx.length; a++) for(let c = a + 1; c < bx.length; c++){
+    const dx = bx[c] - bx[a]; if(Math.abs(dx) > 1e-9) sl.push((by[c] - by[a]) / dx);
+  }
+  const k = sl.length ? Math.max(0, medianOf(sl)) : 0;
+  const yref = medianOf(by.map((y, i) => y - k * bx[i]));
+  const span = bx.length ? bx[bx.length - 1] - bx[0] : 0;
+  return { k, rref, q, binX:bx, binY:by.map(y => y - yref), span, dR:null };
+}
+
+/** Population call per cell from the current gate. */
+function buildPop(){
+  const m = S.marker, v = m.kind === "pos" ? S.cols[m.key] : markerValues();
+  const pop = new Uint8Array(S.rows);
+  if(m.kind === "pos") for(let i = 0; i < S.rows; i++) pop[i] = v[i] > 0.5 ? 1 : 0;
+  else { const t = S.thr; for(let i = 0; i < S.rows; i++) pop[i] = v[i] > t ? 1 : 0; }
+  S.pop = pop;
+}
+
+/** Which cells are analysed. */
+function buildActive(){
+  const C = S.cols, y = C[`foci_n_${S.foci}`];
+  const dead = S.exDead && S.deadCol ? C[S.deadCol] : null;
+  const inc = new Uint8Array(S.wellKeys.length);
+  S.wellKeys.forEach((w, k) => inc[k] = S.conc.has(w) && !S.wellOff.has(w) ? 1 : 0);
+  let lo = -Infinity, hi = Infinity;
+  if(S.cellset !== "all" && isFinite(S.dnaPeak)){
+    const c = S.dnaPeak + (S.cellset === "g2" ? 1 : 0);
+    lo = c - G1W; hi = c + G1W;
+  }
+  const act = new Uint8Array(S.rows);
+  const panK = S.qcKeys.find(k => k.pan === S.foci && S.qc[k.key].on);
+  const base = panK ? new Uint8Array(S.rows) : null;   // 1 = passes all but the pan-nuclear window
+  const pv = panK ? S.cols[panK.key] : null, pHi = panK ? S.qc[panK.key].hi : Infinity;
+  const dl = S.dnaLog;
+  let n = 0;
+  for(let i = 0; i < S.rows; i++){
+    const w = S.wellOf[i];
+    if(w < 0 || !inc[w] || !isFinite(y[i])) continue;
+    if(dead && dead[i] > 0.5) continue;
+    if(dl && (lo > -Infinity) && !(dl[i] >= lo && dl[i] <= hi)) continue;
+    if(base && (!S.qcKeepNoPan || S.qcKeepNoPan[i])) base[i] = pv[i] > pHi ? 2 : 1;   // 2 = pan-nuclear
+    if(S.qcKeep && !S.qcKeep[i]) continue;
+    act[i] = 1; n++;
+  }
+  S.active = act; S.nActive = n; S.panBase = base;
+}
+
+/** Per well and population: n, sums, and the full count histogram. */
+function buildAgg(){
+  const C = S.cols, y = C[`foci_n_${S.foci}`];
+  const af = C[`foci_area_fraction_${S.foci}`], ii = C[`foci_integrated_intensity_${S.foci}`];
+  const W = S.wellKeys.length;
+  const agg = Array.from({ length: W }, () => [0, 1].map(() =>
+    ({ n:0, sum:0, hist:new Float64Array(HMAX), af:0, afn:0, ii:0, iin:0, pan:0, panBase:0 })));
+  if(S.panBase) for(let i = 0; i < S.rows; i++){
+    const b = S.panBase[i]; if(!b) continue;
+    const a = agg[S.wellOf[i]][S.pop[i]]; a.panBase++; if(b === 2) a.pan++;
+  }
+  for(let i = 0; i < S.rows; i++){
+    if(!S.active[i]) continue;
+    const a = agg[S.wellOf[i]][S.pop[i]], c = y[i];
+    a.n++; a.sum += c; a.hist[Math.min(HMAX - 1, Math.max(0, Math.round(c)))]++;
+    if(af && isFinite(af[i])){ a.af += af[i]; a.afn++; }
+    if(ii && isFinite(ii[i])){ a.ii += ii[i]; a.iin++; }
+  }
+  S.agg = agg;
+}
+
+/* ---- readouts --------------------------------------------------------- */
+function histQuantile(h, n, q){              // numpy 'linear' on integer data
+  if(!n) return NaN;
+  const pos = q * (n - 1), lo = Math.floor(pos), hi = Math.ceil(pos);
+  const at = k => { let c = 0; for(let v = 0; v < h.length; v++){ c += h[v]; if(c > k) return v; } return h.length - 1; };
+  const a = at(lo), b = at(hi);
+  return a + (b - a) * (pos - lo);
+}
+function readouts(){
+  const k = S.k, out = [
+    { key:"mean",   label:"mean foci per nucleus", unit:"foci" },
+    { key:"pctK",   label:`% nuclei with ≥ ${k} foci`, unit:"%" },
+    { key:"median", label:"median foci per nucleus", unit:"foci" },
+    { key:"p90",    label:"90th percentile of foci per nucleus", unit:"foci" },
+    { key:"meanPos",label:"mean foci in nuclei that have any", unit:"foci" },
+  ];
+  if(S.qcKeys.some(q => q.pan === S.foci && S.qc[q.key].on))
+    out.push({ key:"pctPan", label:`% pan-nuclear nuclei (above the ${S.foci} window)`, unit:"%" });
+  if(S.cols[`foci_area_fraction_${S.foci}`]) out.push({ key:"af", label:"mean foci area fraction", unit:"" });
+  if(S.cols[`foci_integrated_intensity_${S.foci}`]) out.push({ key:"ii", label:"mean integrated foci intensity", unit:"" });
+  return out;
+}
+function readoutValue(a, key){
+  if(key === "pctPan") return a.panBase >= S.minCells ? 100 * a.pan / a.panBase : NaN;
+  if(a.n < S.minCells) return NaN;
+  switch(key){
+    case "mean": return a.sum / a.n;
+    case "median": return histQuantile(a.hist, a.n, 0.5);
+    case "p90": return histQuantile(a.hist, a.n, 0.9);
+    case "pctK": { let c = 0; for(let v = S.k; v < HMAX; v++) c += a.hist[v]; return 100 * c / a.n; }
+    case "meanPos": { const n0 = a.hist[0]; return a.n - n0 > 0 ? a.sum / (a.n - n0) : NaN; }
+    case "af": return a.afn ? a.af / a.afn : NaN;
+    case "ii": return a.iin ? a.ii / a.iin : NaN;
+  }
+  return NaN;
+}
+const curReadout = () => readouts().find(r => r.key === S.readout) || readouts()[0];
+
+/** Wells in the analysis, with their readouts. */
+function buildWellTable(){
+  S.wells = [];
+  S.wellKeys.forEach((w, k) => {
+    if(!S.conc.has(w)) return;
+    const [a, b] = S.agg[k];
+    const ra = readoutValue(a, S.readout), rb = readoutValue(b, S.readout);
+    S.wells.push({ w, k, c:S.conc.get(w), on:!S.wellOff.has(w), nA:a.n, nB:b.n, rA:ra, rB:rb, d:rb - ra });
+  });
+  const used = S.wells.filter(x => x.on);
+  S.levels = [...new Set(used.map(x => x.c))].sort((a, b) => a - b);
+}
+
+/* ---- concentration axis: log scale with the control on a break ----- */
+function doseAxis(){
+  const pos = S.levels.filter(c => c > 0);
+  const hasCtrl = S.levels.includes(0);
+  if(!pos.length) return { x: c => S.levels.indexOf(c), lo: -0.5, hi: S.levels.length - 0.5, log:false, hasCtrl };
+  const lg = pos.map(Math.log10);
+  const gaps = lg.slice(1).map((v, i) => v - lg[i]).sort((a, b) => a - b);
+  const step = gaps.length ? Math.max(gaps[Math.floor(gaps.length / 2)], 0.3) : 1;
+  const ctrlX = lg[0] - step;
+  const x = c => c > 0 ? Math.log10(c) : ctrlX;
+  return { x, lo: (hasCtrl ? ctrlX : lg[0]) - step * 0.45, hi: lg[lg.length - 1] + step * 0.45,
+           log:true, hasCtrl, ctrlX, step };
+}
+/** The concentration variable for the model, with the lowest level at 0. */
+function modelDose(){
+  if(S.mDose === "rank") return c => S.levels.indexOf(c);
+  const ax = doseAxis();
+  if(!ax.log) return c => S.levels.indexOf(c);
+  const base = ax.x(S.levels[0]);
+  return c => ax.x(c) - base;
+}
+
+/* ======================================================================
+   Well-level statistics
+   ====================================================================== */
+function wellStats(){
+  const used = S.wells.filter(x => x.on && isFinite(x.rA) && isFinite(x.rB));
+  const d = used.map(x => x.d);
+  const pair = { n:used.length, t:pairedT(d), w:wilcoxonSigned(d) };
+  // ratio on the log scale, when both readouts are positive everywhere
+  if(used.length >= 2 && used.every(x => x.rA > 0 && x.rB > 0)){
+    const lr = used.map(x => Math.log(x.rB / x.rA)), r = pairedT(lr);
+    pair.ratio = { est:Math.exp(r.mean), lo:Math.exp(r.lo), hi:Math.exp(r.hi), p:r.p };
+  }
+  // per concentration
+  const per = S.levels.map(c => {
+    const ws = used.filter(x => x.c === c);
+    const t = ws.length >= 3 ? pairedT(ws.map(x => x.d)) : null;
+    return { c, n:ws.length, A:ws.length ? mean(ws.map(x => x.rA)) : NaN,
+             B:ws.length ? mean(ws.map(x => x.rB)) : NaN,
+             d:ws.length ? mean(ws.map(x => x.d)) : NaN, p:t ? t.p : NaN };
+  });
+  const ps = per.map(r => r.p), idx = ps.map((p, i) => i).filter(i => isFinite(ps[i]));
+  const adj = idx.length ? holm(idx.map(i => ps[i])) : [];
+  idx.forEach((i, j) => per[i].padj = adj[j]);
+  // dose trend (Spearman across wells; the control ranks lowest)
+  const usedA = S.wells.filter(x => x.on && isFinite(x.rA)), usedB = S.wells.filter(x => x.on && isFinite(x.rB));
+  const trend = {
+    A: spearman(usedA.map(x => x.c), usedA.map(x => x.rA)),
+    B: spearman(usedB.map(x => x.c), usedB.map(x => x.rB)),
+    D: spearman(used.map(x => x.c), used.map(x => x.d)),
+  };
+  return { used, pair, per, trend };
+}
+function holm(ps){
+  const m = ps.length, o = ps.map((p, i) => [p, i]).sort((a, b) => a[0] - b[0]);
+  const out = new Array(m); let run = 0;
+  o.forEach(([p, i], r) => { run = Math.max(run, Math.min(1, (m - r) * p)); out[i] = run; });
+  return out;
+}
+
+/* ======================================================================
+   Cell-level model: population x dose, clustered by well
+   ====================================================================== */
+function buildModelData(){
+  const C = S.cols, yv = C[`foci_n_${S.foci}`];
+  const dose = modelDose();
+  const wx = new Float64Array(S.wellKeys.length).fill(NaN);
+  const clus = new Int32Array(S.wellKeys.length).fill(-1);
+  let G = 0;
+  S.wells.forEach(x => { if(x.on){ wx[x.k] = dose(x.c); clus[x.k] = G++; } });
+  const adj = S.mAdj && S.dnaLog && isFinite(S.dnaPeak);
+  // Collapse identical rows: (well, population, outcome[, DNA bin]) with a
+  // frequency weight. Exact for every estimate when there is no covariate;
+  // with DNA content, the covariate is binned to 0.01 doublings.
+  const rows = new Map();
+  for(let i = 0; i < S.rows; i++){
+    if(!S.active[i]) continue;
+    const w = S.wellOf[i]; if(clus[w] < 0) continue;
+    let yy = Math.round(yv[i]);
+    if(S.mKind === "logit") yy = yy >= S.k ? 1 : 0;
+    let key = (w * 2 + S.pop[i]) * 100003 + yy, z = 0;
+    if(adj){ z = Math.round((S.dnaLog[i] - S.dnaPeak) * 100); if(!isFinite(z)) continue; key = key * 2003 + (z + 1000); }
+    const r = rows.get(key);
+    if(r) r[4]++; else rows.set(key, [w, S.pop[i], yy, z / 100, 1]);
+  }
+  const N = rows.size, p = adj ? 5 : 4;
+  const X = Array.from({ length: p }, () => new Float64Array(N));
+  const y = new Float64Array(N), wt = new Float64Array(N), g = new Int32Array(N);
+  let i = 0;
+  for(const [w, pp, yy, z, f] of rows.values()){
+    X[0][i] = 1; X[1][i] = pp; X[2][i] = wx[w]; X[3][i] = pp * wx[w];
+    if(adj) X[4][i] = z;
+    y[i] = yy; wt[i] = f; g[i] = clus[w]; i++;
+  }
+  return { X, y, wt, g, G, adj, xmax: Math.max(...S.levels.map(dose)) };
+}
+function fitModel(){
+  const D = buildModelData();
+  if(D.G < 3) return { error:`needs at least 3 wells (has ${D.G})` };
+  let nPop = [0, 0]; for(let i = 0; i < D.y.length; i++) nPop[D.X[1][i]] += D.wt[i];
+  if(nPop[0] < 1 || nPop[1] < 1) return { error:"both populations need cells" };
+  let fit, alpha = 0;
+  if(S.mKind === "nb"){ fit = nbFit(D.X, D.y, D.wt); alpha = fit.alpha; }
+  else fit = glmIRLS(D.X, D.y, D.wt, "logit");
+  if(!fit || !fit.beta.every(isFinite)) return { error:"the model did not converge" };
+  const cv = clusterCov(D.X, D.y, D.wt, D.g, S.mKind, alpha, fit.beta);
+  if(!cv) return { error:"the model is singular (e.g. one dose only, or a population missing)" };
+  const p = fit.beta.length, L = (...ix) => { const v = new Array(p).fill(0); ix.forEach(([j, c]) => v[j] = c); return v; };
+  const lc = l => linComb(l, fit.beta, cv.V, cv.G);
+  const res = {
+    G: cv.G, N: cv.N, alpha, adj: D.adj, xmax: D.xmax, converged: fit.converged,
+    popLow:  lc(L([1, 1])),
+    popHigh: lc(L([1, 1], [3, D.xmax])),
+    doseA:   lc(L([2, 1])),
+    doseB:   lc(L([2, 1], [3, 1])),
+    inter:   lc(L([3, 1])),
+    dna:     D.adj ? lc(L([4, 1])) : null,
+  };
+  return res;
+}
+
+/* ======================================================================
+   Drawing
+   ====================================================================== */
+function cv(id, h){
+  const c = $(id), w = Math.max(240, c.clientWidth || c.parentElement.clientWidth || 600);
+  const d = window.devicePixelRatio || 1;
+  c.width = Math.round(w * d); c.height = Math.round(h * d); c.style.height = h + "px";
+  const g = c.getContext("2d"); g.setTransform(d, 0, 0, d, 0, 0); g.clearRect(0, 0, w, h);
+  g.font = "10px " + css("--mono"); return { g, W:w, H:h };
+}
+function niceTicks(lo, hi, n = 5){
+  if(!(hi > lo)) return [lo];
+  const raw = (hi - lo) / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw) || raw;
+  const out = []; for(let v = Math.ceil(lo / step) * step; v <= hi + 1e-9 * step; v += step) out.push(+v.toPrecision(10));
+  return out;
+}
+function frame(g, x0, y0, x1, y1){
+  g.strokeStyle = css("--line"); g.lineWidth = 1;
+  g.beginPath(); g.moveTo(x0, y0); g.lineTo(x0, y1); g.lineTo(x1, y1); g.stroke();
+}
+function yAxis(g, x0, sy, ticks, x1, label, fmtT = v => fmt(v)){
+  g.fillStyle = css("--faint"); g.textAlign = "right"; g.textBaseline = "middle";
+  for(const t of ticks){
+    const y = sy(t); g.fillText(fmtT(t), x0 - 5, y);
+    g.strokeStyle = "rgba(44,61,82,.45)"; g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke();
+  }
+  if(label){ g.save(); g.translate(11, (sy(ticks[0]) + sy(ticks[ticks.length - 1])) / 2);
+    g.rotate(-Math.PI / 2); g.textAlign = "center"; g.fillStyle = css("--dim"); g.fillText(label, 0, 0); g.restore(); }
+}
+function doseXAxis(g, ax, sx, yb, label){
+  g.fillStyle = css("--faint"); g.textAlign = "center"; g.textBaseline = "top";
+  if(ax.log){
+    const lo = Math.ceil(ax.log ? (ax.hasCtrl ? ax.ctrlX + ax.step * 0.5 : ax.lo) : ax.lo), hi = Math.floor(ax.hi);
+    for(let e = lo; e <= hi; e++) g.fillText(fmtConc(Math.pow(10, e)), sx(e), yb + 5);
+    if(ax.hasCtrl){
+      g.fillText("0", sx(ax.ctrlX), yb + 5);
+      const bx = sx(ax.ctrlX + ax.step * 0.5);          // axis break
+      g.strokeStyle = css("--faint"); g.beginPath();
+      g.moveTo(bx - 4, yb + 4); g.lineTo(bx, yb - 4); g.moveTo(bx, yb + 4); g.lineTo(bx + 4, yb - 4); g.stroke();
+    }
+  } else S.levels.forEach((c, i) => g.fillText(fmtConc(c), sx(i), yb + 5));
+  g.fillStyle = css("--dim"); g.fillText(label, (sx(ax.lo) + sx(ax.hi)) / 2, yb + 19);
+}
+function concColour(i, n){                              // light blue -> yellow, control grey
+  const stops = [[86,180,233],[0,158,115],[122,209,81],[253,231,37]];
+  if(n <= 1) return "rgb(86,180,233)";
+  const t = i / (n - 1), s = t * (stops.length - 1), k = Math.min(stops.length - 2, Math.floor(s)), f = s - k;
+  const c = stops[k].map((v, j) => Math.round(v + (stops[k + 1][j] - v) * f));
+  return `rgb(${c.join(",")})`;
+}
+const popCol = p => css(p ? "--pB" : "--pA");
+const concLabel = c => c === 0 ? "control" : fmtConc(c) + unitS();
+
+function drawDose(){
+  const { g, W, H } = cv("cDose", 300), r = curReadout();
+  const x0 = 52, x1 = W - 12, y0 = 14, y1 = H - 40;
+  const used = S.wells.filter(x => x.on);
+  const vals = used.flatMap(x => [x.rA, x.rB]).filter(isFinite);
+  if(!vals.length || !S.levels.length){ note(g, W, H, "assign concentrations to wells"); return; }
+  const ax = doseAxis();
+  let lo = Math.min(0, ...vals), hi = Math.max(...vals); if(hi === lo) hi = lo + 1;
+  hi += (hi - lo) * 0.06;
+  const sx = v => x0 + (v - ax.lo) / (ax.hi - ax.lo) * (x1 - x0), sy = v => y1 - (v - lo) / (hi - lo) * (y1 - y0);
+  yAxis(g, x0, sy, niceTicks(lo, hi), x1, r.label);
+  frame(g, x0, y0, x1, y1); doseXAxis(g, ax, sx, y1, `concentration${unitS() ? " (" + S.unit + ")" : ""}`);
+  const off = (ax.hi - ax.lo) * 0.012;
+  for(const p of [0, 1]){
+    const key = p ? "rB" : "rA", col = popCol(p);
+    g.fillStyle = col; g.globalAlpha = .55;
+    for(const x of used) if(isFinite(x[key])){ g.beginPath(); g.arc(sx(ax.x(x.c) + (p ? off : -off)), sy(x[key]), 3.2, 0, 7); g.fill(); }
+    g.globalAlpha = 1; g.strokeStyle = col; g.lineWidth = 2; g.beginPath();
+    let first = true;
+    for(const c of S.levels){
+      const v = used.filter(x => x.c === c && isFinite(x[key])).map(x => x[key]);
+      if(!v.length) continue;
+      const X = sx(ax.x(c)), Y = sy(mean(v));
+      if(first){ g.moveTo(X, Y); first = false; } else g.lineTo(X, Y);
+    }
+    g.stroke(); g.lineWidth = 1;
+  }
+  legend(g, x0 + 8, y0 + 4);
+}
+function legend(g, x, y){
+  g.textAlign = "left"; g.textBaseline = "middle";
+  [0, 1].forEach(p => { g.fillStyle = popCol(p); g.fillRect(x, y + p * 14 - 4, 9, 9);
+    g.fillStyle = css("--ink"); g.fillText(S.popNames[p], x + 14, y + p * 14 + 1); });
+}
+function note(g, W, H, msg){ g.fillStyle = css("--faint"); g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(msg, W / 2, H / 2); }
+
+function drawDiff(){
+  const { g, W, H } = cv("cDiff", 300), r = curReadout();
+  const x0 = 52, x1 = W - 12, y0 = 14, y1 = H - 40;
+  const used = S.wells.filter(x => x.on && isFinite(x.d));
+  if(!used.length){ note(g, W, H, "no wells with both populations"); return; }
+  const ax = doseAxis();
+  let lo = Math.min(0, ...used.map(x => x.d)), hi = Math.max(0, ...used.map(x => x.d));
+  const pad = (hi - lo) * 0.08 || 1; lo -= pad; hi += pad;
+  const sx = v => x0 + (v - ax.lo) / (ax.hi - ax.lo) * (x1 - x0), sy = v => y1 - (v - lo) / (hi - lo) * (y1 - y0);
+  yAxis(g, x0, sy, niceTicks(lo, hi), x1, `${S.popNames[1]} − ${S.popNames[0]}`);
+  frame(g, x0, y0, x1, y1); doseXAxis(g, ax, sx, y1, `concentration${unitS() ? " (" + S.unit + ")" : ""}`);
+  g.strokeStyle = css("--dim"); g.setLineDash([4, 4]); g.beginPath(); g.moveTo(x0, sy(0)); g.lineTo(x1, sy(0)); g.stroke(); g.setLineDash([]);
+  g.fillStyle = css("--ink"); g.globalAlpha = .7;
+  for(const x of used){ g.beginPath(); g.arc(sx(ax.x(x.c)), sy(x.d), 3.2, 0, 7); g.fill(); }
+  g.globalAlpha = 1; g.strokeStyle = css("--ink"); g.lineWidth = 2; g.beginPath(); let first = true;
+  for(const c of S.levels){ const v = used.filter(x => x.c === c).map(x => x.d); if(!v.length) continue;
+    const X = sx(ax.x(c)), Y = sy(mean(v)); if(first){ g.moveTo(X, Y); first = false; } else g.lineTo(X, Y); }
+  g.stroke(); g.lineWidth = 1;
+  $("diffCap").textContent = `${r.label}: ${S.popNames[1]} minus ${S.popNames[0]} in the same well · above the dashed line = more in ${S.popNames[1]}`;
+}
+
+/** Cells pooled per concentration and population (for the descriptive plots). */
+function pooledHist(){
+  const by = new Map();
+  for(const x of S.wells){ if(!x.on) continue;
+    let e = by.get(x.c); if(!e){ e = [new Float64Array(HMAX), new Float64Array(HMAX), [0, 0]]; by.set(x.c, e); }
+    for(const p of [0, 1]){ const a = S.agg[x.k][p]; for(let v = 0; v < HMAX; v++) e[p][v] += a.hist[v]; e[2][p] += a.n; }
+  }
+  return by;
+}
+function drawSurv(){
+  const { g, W, H } = cv("cSurv", 260);
+  const by = pooledHist();
+  if(!by.size){ note(g, W, H, "no data"); return; }
+  // x range: up to the 99.5th percentile of all counts
+  const all = new Float64Array(HMAX); let N = 0;
+  for(const e of by.values()) for(const p of [0, 1]){ for(let v = 0; v < HMAX; v++) all[v] += e[p][v]; N += e[2][p]; }
+  const kmax = Math.max(5, Math.ceil(histQuantile(all, N, 0.995)));
+  const panelW = (W - 30) / 2;
+  [0, 1].forEach(p => {
+    const x0 = 46 + p * (panelW + 14), x1 = x0 + panelW - 46, y0 = 18, y1 = H - 38;
+    const sx = k => x0 + k / kmax * (x1 - x0), sy = v => y1 - v / 100 * (y1 - y0);
+    yAxis(g, x0, sy, [0, 25, 50, 75, 100], x1, p ? "" : "% nuclei with ≥ k foci", v => v);
+    frame(g, x0, y0, x1, y1);
+    g.fillStyle = css("--faint"); g.textAlign = "center"; g.textBaseline = "top";
+    for(const t of niceTicks(0, kmax, 6)) if(t === Math.round(t)) g.fillText(t, sx(t), y1 + 5);
+    g.fillStyle = css("--dim"); g.fillText("k (foci per nucleus)", (x0 + x1) / 2, y1 + 19);
+    g.fillStyle = popCol(p); g.textAlign = "left"; g.textBaseline = "top"; g.font = "11px " + css("--sans");
+    g.fillText(S.popNames[p], x0 + 8, y0 - 14); g.font = "10px " + css("--mono");
+    S.levels.forEach((c, i) => {
+      const e = by.get(c); if(!e || !e[2][p]) return;
+      const h = e[p], n = e[2][p];
+      g.strokeStyle = c === 0 ? "#9C9C9C" : concColour(i - (S.levels[0] === 0 ? 1 : 0), S.levels.length - (S.levels[0] === 0 ? 1 : 0));
+      g.lineWidth = 1.8; g.beginPath();
+      let ge = n;                                   // count with >= k
+      for(let k = 0; k <= kmax; k++){
+        const X = sx(k), Y = sy(100 * ge / n);
+        if(k === 0) g.moveTo(X, Y); else { g.lineTo(X, g.__lastY); g.lineTo(X, Y); }
+        g.__lastY = Y; ge -= h[k];
+      }
+      g.lineTo(sx(kmax), g.__lastY); g.stroke(); g.lineWidth = 1;
+    });
+    if(p === 1){                                    // concentration key
+      let ky = y0 + 2; g.textAlign = "right"; g.textBaseline = "middle";
+      S.levels.forEach((c, i) => {
+        g.fillStyle = c === 0 ? "#9C9C9C" : concColour(i - (S.levels[0] === 0 ? 1 : 0), S.levels.length - (S.levels[0] === 0 ? 1 : 0));
+        g.fillRect(x1 - 9, ky - 4, 9, 9); g.fillStyle = css("--dim"); g.fillText(concLabel(c), x1 - 13, ky); ky += 13;
+      });
+    }
+  });
+}
+function parseBins(){
+  const out = [];
+  for(const part of $("bins").value.split(",")){
+    const s = part.trim(); let m;
+    if((m = /^(\d+)\s*\+$/.exec(s))) out.push([+m[1], Infinity]);
+    else if((m = /^(\d+)\s*[-–]\s*(\d+)$/.exec(s))) out.push([+m[1], +m[2]]);
+    else if((m = /^(\d+)$/.exec(s))) out.push([+m[1], +m[1]]);
+  }
+  return out.length ? out : S.bins;
+}
+function drawBins(){
+  const { g, W, H } = cv("cBins", 270);
+  const by = pooledHist(); S.bins = parseBins();
+  if(!by.size){ note(g, W, H, "no data"); return; }
+  const x0 = 46, x1 = W - 120, y0 = 12, y1 = H - 46, L = S.levels.length;
+  const slot = (x1 - x0) / L, bw = Math.min(26, slot * 0.36);
+  const sy = v => y1 - v / 100 * (y1 - y0);
+  yAxis(g, x0, sy, [0, 25, 50, 75, 100], x1, "% of nuclei", v => v);
+  frame(g, x0, y0, x1, y1);
+  const PAL = [[48,64,88],[62,108,138],[79,158,143],[167,201,87],[253,231,37]];
+  const shade = (b, nb) => { const t = nb > 1 ? b / (nb - 1) : 0, s = t * (PAL.length - 1),
+    k = Math.min(PAL.length - 2, Math.floor(s)), f = s - k;
+    return `rgb(${PAL[k].map((v, j) => Math.round(v + (PAL[k + 1][j] - v) * f)).join(",")})`; };
+  S.levels.forEach((c, i) => {
+    const e = by.get(c), cx = x0 + slot * (i + 0.5);
+    [0, 1].forEach(p => {
+      if(!e || !e[2][p]) return;
+      const bx = cx + (p ? 2 : -bw - 2); let acc = 0;
+      S.bins.forEach(([a, b], bi) => {
+        let n = 0; for(let v = a; v <= Math.min(b, HMAX - 1); v++) n += e[p][v];
+        const f = 100 * n / e[2][p];
+        g.fillStyle = shade(bi, S.bins.length); g.fillRect(bx, sy(acc + f), bw, sy(acc) - sy(acc + f)); acc += f;
+      });
+      g.fillStyle = popCol(p); g.fillRect(bx, y1 + 2, bw, 3);
+    });
+    g.fillStyle = css("--faint"); g.textAlign = "center"; g.textBaseline = "top"; g.fillText(c === 0 ? "0" : fmtConc(c), cx, y1 + 9);
+  });
+  g.fillStyle = css("--dim"); g.textAlign = "center"; g.fillText(`concentration${unitS() ? " (" + S.unit + ")" : ""}`, (x0 + x1) / 2, y1 + 25);
+  g.textAlign = "left"; g.textBaseline = "middle";
+  S.bins.slice().reverse().forEach(([a, b], j) => {
+    const bi = S.bins.length - 1 - j, y = y0 + 8 + j * 15;
+    g.fillStyle = shade(bi, S.bins.length); g.fillRect(x1 + 14, y - 5, 11, 11);
+    g.fillStyle = css("--dim"); g.fillText(b === Infinity ? `${a}+ foci` : a === b ? `${a} foci` : `${a}–${b} foci`, x1 + 30, y);
+  });
+  $("capA").textContent = S.popNames[0]; $("capB").textContent = S.popNames[1];
+}
+function drawSuper(){
+  const { g, W, H } = cv("cSuper", 320);
+  const y = S.cols[`foci_n_${S.foci}`];
+  if(!S.levels.length){ note(g, W, H, "no data"); return; }
+  // sample cells per well and population
+  const CAP = 150, samp = new Map(), seen = new Map();
+  let rnd = 12345; const rand = () => (rnd = (rnd * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for(let i = 0; i < S.rows; i++){
+    if(!S.active[i]) continue;
+    const key = S.wellOf[i] * 2 + S.pop[i]; const c = (seen.get(key) || 0) + 1; seen.set(key, c);
+    let a = samp.get(key); if(!a){ a = []; samp.set(key, a); }
+    if(a.length < CAP) a.push(y[i]); else { const j = Math.floor(rand() * c); if(j < CAP) a[j] = y[i]; }
+  }
+  let ymax = 1; for(const a of samp.values()) for(const v of a) if(v > ymax) ymax = v;
+  const x0 = 46, x1 = W - 10, y0 = 12, y1 = H - 40, L = S.levels.length, slot = (x1 - x0) / L;
+  const sy = v => y1 - Math.sqrt(Math.max(0, v)) / Math.sqrt(ymax) * (y1 - y0);
+  const ticks = [];                                       // keep labels >= 14 px apart
+  for(const t of [0, 1, 2, 5, 10, 20, 50, 100, 200, 500]){
+    if(t > ymax) break;
+    if(!ticks.length || sy(ticks[ticks.length - 1]) - sy(t) >= 14) ticks.push(t);
+  }
+  yAxis(g, x0, sy, ticks, x1, "foci per nucleus (√ scale)", v => v);
+  frame(g, x0, y0, x1, y1);
+  S.levels.forEach((c, i) => {
+    const cx = x0 + slot * (i + 0.5), half = slot * 0.22;
+    [0, 1].forEach(p => {
+      const px = cx + (p ? half * 0.95 : -half * 0.95);
+      const ws = S.wells.filter(x => x.on && x.c === c);
+      g.fillStyle = popCol(p); g.globalAlpha = .16;
+      for(const x of ws){ const a = samp.get(x.k * 2 + p) || [];
+        for(const v of a){ g.fillRect(px + (rand() - .5) * half * 1.4, sy(v + (rand() - .5) * 0.6) - 1, 2, 2); } }
+      g.globalAlpha = 1;
+      const means = ws.map(x => { const a = S.agg[x.k][p]; return a.n ? a.sum / a.n : NaN; }).filter(isFinite);
+      means.forEach((m, j) => { g.beginPath(); g.arc(px + (j - (means.length - 1) / 2) * 5, sy(m), 4.5, 0, 7);
+        g.fillStyle = popCol(p); g.fill(); g.strokeStyle = "#0B1017"; g.lineWidth = 1.5; g.stroke(); g.lineWidth = 1; });
+    });
+    g.fillStyle = css("--faint"); g.textAlign = "center"; g.textBaseline = "top"; g.fillText(c === 0 ? "0" : fmtConc(c), cx, y1 + 5);
+  });
+  g.fillStyle = css("--dim"); g.textAlign = "center"; g.fillText(`concentration${unitS() ? " (" + S.unit + ")" : ""}`, (x0 + x1) / 2, y1 + 21);
+  legend(g, x1 - 110, y0 + 6);
+}
+
+/* ---- sidebar plots: marker gate and DNA content ---------------------- */
+function gateGeom(){
+  const m = S.marker, v = m.kind === "pos" ? S.cols[m.key] : markerValues(), xs = [];
+  const step = Math.max(1, Math.floor(S.rows / 60000));
+  for(let i = 0; i < S.rows; i += step) if(S.wellOf[i] >= 0 && v[i] > 0 && qcOK(i)) xs.push(Math.log10(v[i]));
+  xs.sort((a, b) => a - b);
+  const lo = xs[Math.floor(xs.length * 0.002)] ?? 0, hi = xs[Math.floor(xs.length * 0.998)] ?? 1;
+  return { xs, lo, hi: hi > lo ? hi : lo + 1 };
+}
+function drawGate(){
+  const { g, W, H } = cv("cGate", 120);
+  if(S.marker.kind === "pos"){ note(g, W, H, "using the pipeline's call — no threshold"); $("gateNote").textContent = ""; return; }
+  const G = S.gate || (S.gate = gateGeom());
+  const NB = 90, hist = new Float64Array(NB), bw = (G.hi - G.lo) / NB;
+  for(const x of G.xs){ const b = Math.floor((x - G.lo) / bw); if(b >= 0 && b < NB) hist[b]++; }
+  const mx = Math.max(...hist) || 1;
+  const x0 = 6, x1 = W - 6, y0 = 6, y1 = H - 18;
+  const sx = v => x0 + (v - G.lo) / (G.hi - G.lo) * (x1 - x0);
+  const t = Math.log10(S.thr);
+  for(let b = 0; b < NB; b++){
+    const xv = G.lo + (b + 0.5) * bw;
+    g.fillStyle = popCol(xv > t ? 1 : 0); g.globalAlpha = .85;
+    const hh = hist[b] / mx * (y1 - y0); g.fillRect(sx(G.lo + b * bw), y1 - hh, Math.max(1, (x1 - x0) / NB - 1), hh);
+  }
+  g.globalAlpha = 1;
+  g.strokeStyle = css("--ink"); g.lineWidth = 2; g.beginPath(); g.moveTo(sx(t), y0 - 4); g.lineTo(sx(t), y1); g.stroke(); g.lineWidth = 1;
+  g.fillStyle = css("--faint"); g.textAlign = "center"; g.textBaseline = "top";
+  const fI = v => v >= 1e6 ? v / 1e6 + "M" : v >= 1e3 ? v / 1e3 + "k" : v + "";
+  for(let e = Math.ceil(G.lo); e <= Math.floor(G.hi); e++) g.fillText(fI(Math.pow(10, e)), sx(e), y1 + 4);
+  S.gateMap = { x0, x1, lo:G.lo, hi:G.hi };
+}
+function drawDNA(){
+  const box = $("dnaBox");
+  if(!S.dnaHist || !isFinite(S.dnaPeak)){ box.style.display = "none"; return; }
+  box.style.display = "";
+  const { g, W, H } = cv("cDNA", 70), D = S.dnaHist, NB = D.sm.length;
+  const mx = Math.max(...D.sm) || 1, x0 = 4, x1 = W - 4, y1 = H - 4;
+  const sx = v => x0 + (v - D.lo) / (NB * D.bw) * (x1 - x0);
+  if(S.cellset !== "all"){
+    const c = S.dnaPeak + (S.cellset === "g2" ? 1 : 0);
+    g.fillStyle = "rgba(86,180,233,.13)"; g.fillRect(sx(c - G1W), 0, sx(c + G1W) - sx(c - G1W), H);
+  }
+  g.strokeStyle = css("--dim"); g.beginPath();
+  D.sm.forEach((v, b) => { const X = sx(D.lo + (b + 0.5) * D.bw), Y = y1 - v / mx * (H - 10); b ? g.lineTo(X, Y) : g.moveTo(X, Y); });
+  g.stroke();
+  for(const [k, lab] of [[0, "2N"], [1, "4N"]]){ const X = sx(S.dnaPeak + k); g.strokeStyle = css("--faint"); g.setLineDash([2, 3]);
+    g.beginPath(); g.moveTo(X, 2); g.lineTo(X, y1); g.stroke(); g.setLineDash([]); g.fillStyle = css("--faint"); g.textAlign = "left"; g.textBaseline = "top"; g.fillText(lab, X + 3, 1); }
+}
+
+/* ---- autofluorescence diagnostics ---------------------------------- */
+function afSuspicion(){
+  const I = S.afInfo; if(!I || !isFinite(I.ref) || I.ref <= 0) return NaN;
+  const top = Math.max(...[...I.iso.keys()]);
+  return I.iso.has(top) ? (I.ref + I.iso.get(top)) / I.ref : NaN;
+}
+const fInt = v => !isFinite(v) ? "—" : Math.abs(v) >= 1e4 ? (v / 1e3).toFixed(0) + "k" : Math.abs(v) >= 1e3 ? (v / 1e3).toFixed(1) + "k" : v.toFixed(0);
+function drawAF(){
+  const card = $("afCard");
+  if(S.marker.kind === "pos" || !S.afInfo){ card.style.display = "none"; $("afHint").textContent = ""; return; }
+  card.style.display = "";
+  drawRidge(); drawShift();
+  const I = S.afInfo, R = afSuspicion(), ch = S.marker.ch;
+  const top = Math.max(...[...I.iso.keys()]);
+  let h = "";
+  if(S.af === "none") h = isFinite(R) && R > 1.5
+    ? `<span style="color:var(--warn)">The ${esc(ch)}-negative peak is ×${R.toFixed(1)} brighter at the top dose than in the control — likely autofluorescence of the compound.</span>`
+    : `No correction. The ${esc(ch)}-negative peak moves ×${isFinite(R) ? R.toFixed(2) : "—"} from control to top dose.`;
+  else if(S.af === "iso") h = `Subtracting the shift of the ${esc(ch)}-negative peak, fitted as a non-decreasing function of concentration: +${fInt(I.iso.get(top))} at ${fmtConc(top)}${unitS()} (control peak ${fInt(I.ref)}). Assumes the negative cells' true ${esc(ch)} level does not change with dose.`;
+  else if(S.af === "well") h = `Subtracting each well's own shift of the ${esc(ch)}-negative peak (control peak ${fInt(I.ref)}). Noisier than the fitted version with few cells per well. Assumes the negative cells' true ${esc(ch)} level does not change with dose.`;
+  else if(S.af === "rep") h = I.k > 0
+    ? `Per cell: ${esc(ch)} − ${I.k.toPrecision(3)} × (${esc(S.afRep.replace(/^(mean|median)_/, ""))} − ${fInt(I.rref)}). The coefficient is how much the ${esc(ch)} of negative cells rises per unit of reporter signal, fitted on the cells. Corrects cell-to-cell differences in drug uptake too.`
+    : `<span style="color:var(--warn)">The ${esc(ch)} of negative cells does not rise with the reporter, so no compensation could be calibrated. Pick a channel in which the compound is visible.</span>`;
+  $("afHint").innerHTML = h;
+  $("afTitle").textContent = S.af === "none" ? "check for compound autofluorescence" : "after correction";
+}
+function drawRidge(){
+  const lv = [...new Set(S.wells.filter(x => x.on).map(x => x.c))].sort((a, b) => a - b);
+  const L = lv.length, H = Math.max(200, 26 * L + 46);
+  const { g, W } = cv("cRidge", H);
+  if(!L){ note(g, W, H, "assign concentrations to wells"); return; }
+  const raw = S.cols[S.marker.key], cor = S.mk;
+  const lvOf = new Int16Array(S.wellKeys.length).fill(-1);
+  S.wells.forEach(x => { if(x.on) lvOf[x.k] = lv.indexOf(x.c); });
+  const cnt = new Float64Array(L); for(let i = 0; i < S.rows; i++){ const w = S.wellOf[i]; if(w >= 0 && lvOf[w] >= 0 && qcOK(i)) cnt[lvOf[w]]++; }
+  const G = S.gate || gateGeom();
+  let lo = G.lo, hi = G.hi;
+  if(cor){                                            // show both: widen to the raw range too
+    const xs = []; for(let i = 0; i < S.rows; i += Math.max(1, Math.floor(S.rows / 40000))) if(S.wellOf[i] >= 0 && raw[i] > 0) xs.push(Math.log10(raw[i]));
+    xs.sort((a, b) => a - b); lo = Math.min(lo, xs[Math.floor(xs.length * .002)]); hi = Math.max(hi, xs[Math.floor(xs.length * .998)]);
+  }
+  const NB = 70, bw = (hi - lo) / NB;
+  const hr = Array.from({ length: L }, () => new Float64Array(NB)), hc = Array.from({ length: L }, () => new Float64Array(NB));
+  const seen = new Float64Array(L);
+  for(let i = 0; i < S.rows; i++){
+    const w = S.wellOf[i]; if(w < 0 || !qcOK(i)) continue; const l = lvOf[w]; if(l < 0) continue;
+    if(cnt[l] > 20000 && (++seen[l]) % Math.ceil(cnt[l] / 20000)) continue;
+    if(raw[i] > 0){ const b = Math.floor((Math.log10(raw[i]) - lo) / bw); if(b >= 0 && b < NB) hr[l][b]++; }
+    if(cor && cor[i] > 0){ const b = Math.floor((Math.log10(cor[i]) - lo) / bw); if(b >= 0 && b < NB) hc[l][b]++; }
+  }
+  const x0 = 64, x1 = W - 8, y0 = 8, y1 = H - 30, rh = (y1 - y0) / L;
+  const sx = v => x0 + (v - lo) / (hi - lo) * (x1 - x0), t = Math.log10(S.thr);
+  for(let l = 0; l < L; l++){
+    const base = y0 + rh * (l + 1), use = cor ? hc[l] : hr[l];
+    const mx = Math.max(...use, ...(cor ? hr[l] : [])) || 1, amp = rh * 1.5;
+    for(let b = 0; b < NB; b++){
+      const xv = lo + (b + .5) * bw; g.fillStyle = popCol(xv > t ? 1 : 0); g.globalAlpha = .8;
+      const hh = use[b] / mx * amp; g.fillRect(sx(lo + b * bw), base - hh, Math.max(1, (x1 - x0) / NB - .5), hh);
+    }
+    g.globalAlpha = 1;
+    if(cor){ g.strokeStyle = css("--dim"); g.lineWidth = 1.2; g.beginPath();
+      for(let b = 0; b < NB; b++){ const X = sx(lo + (b + .5) * bw), Y = base - hr[l][b] / mx * amp; b ? g.lineTo(X, Y) : g.moveTo(X, Y); }
+      g.stroke(); g.lineWidth = 1; }
+    g.strokeStyle = css("--line"); g.beginPath(); g.moveTo(x0, base); g.lineTo(x1, base); g.stroke();
+    g.fillStyle = css("--dim"); g.textAlign = "right"; g.textBaseline = "bottom"; g.fillText(concLabel(lv[l]), x0 - 6, base);
+  }
+  g.strokeStyle = css("--ink"); g.lineWidth = 1.5; g.beginPath(); g.moveTo(sx(t), y0); g.lineTo(sx(t), y1); g.stroke(); g.lineWidth = 1;
+  const fI = v => v >= 1e6 ? v / 1e6 + "M" : v >= 1e3 ? v / 1e3 + "k" : v + "";
+  g.fillStyle = css("--faint"); g.textAlign = "center"; g.textBaseline = "top";
+  for(let e = Math.ceil(lo); e <= Math.floor(hi); e++) g.fillText(fI(Math.pow(10, e)), sx(e), y1 + 4);
+  g.fillStyle = css("--dim"); g.fillText(`${S.marker.ch} intensity (log)`, (x0 + x1) / 2, y1 + 16);
+  $("ridgeCap").textContent = cor
+    ? `${S.marker.ch} per concentration after correction (filled) and before (grey line) · vertical line = threshold`
+    : `${S.marker.ch} per concentration · vertical line = threshold · a negative peak creeping right with dose = autofluorescence`;
+}
+function drawShift(){
+  const { g, W, H } = cv("cShift", Math.max(200, 26 * Math.max(1, new Set(S.wells.filter(x => x.on).map(x => x.c)).size) + 46));
+  const I = S.afInfo, used = S.wells.filter(x => x.on && isFinite(I.shift[x.k]));
+  if(!used.length){ note(g, W, H, "not enough cells per well to find the negative peak"); return; }
+  const x0 = 56, x1 = W - 12, y0 = 12, y1 = H - 36;
+  const ys = used.map(x => I.shift[x.k]);
+  if(S.af === "rep" && I.binX){
+    const xs = I.binX, ys = I.binY;
+    let xl = Math.min(0, ...xs), xh = Math.max(...xs); if(xh === xl) xh = xl + 1;
+    let yl = Math.min(0, ...ys), yh = Math.max(...ys); if(yh === yl) yh = yl + 1;
+    const sx = v => x0 + (v - xl) / (xh - xl) * (x1 - x0), sy = v => y1 - (v - yl) / (yh - yl) * (y1 - y0);
+    yAxis(g, x0, sy, niceTicks(yl, yh), x1, `${S.marker.ch}, negative cells`, fInt); frame(g, x0, y0, x1, y1);
+    g.fillStyle = css("--faint"); g.textAlign = "center"; g.textBaseline = "top";
+    for(const t of niceTicks(xl, xh)) g.fillText(fInt(t), sx(t), y1 + 5);
+    g.fillStyle = css("--dim"); g.fillText(`${S.afRep.replace(/^(mean|median)_/, "")} above baseline (reporter)`, (x0 + x1) / 2, y1 + 19);
+    g.fillStyle = css("--ink"); g.globalAlpha = .75;
+    xs.forEach((x, j) => { g.beginPath(); g.arc(sx(x), sy(ys[j]), 3.4, 0, 7); g.fill(); }); g.globalAlpha = 1;
+    if(I.k > 0){ g.strokeStyle = css("--pB"); g.lineWidth = 2; g.beginPath(); g.moveTo(sx(xl), sy(I.k * xl)); g.lineTo(sx(xh), sy(I.k * xh)); g.stroke(); g.lineWidth = 1; }
+    $("shiftCap").textContent = `cells binned by reporter signal · dot = ${Math.round(100 * I.q)}th percentile of ${S.marker.ch} in the bin (negative cells) · line = fitted spill-over, k = ${isFinite(I.k) ? I.k.toPrecision(3) : "—"}`;
+    return;
+  }
+  const ax = doseAxis();
+  let yl = Math.min(0, ...ys), yh = Math.max(0, ...ys); const pad = (yh - yl) * .08 || 1; yl -= pad; yh += pad;
+  const sx = v => x0 + (v - ax.lo) / (ax.hi - ax.lo) * (x1 - x0), sy = v => y1 - (v - yl) / (yh - yl) * (y1 - y0);
+  yAxis(g, x0, sy, niceTicks(yl, yh), x1, "negative-peak shift", fInt); frame(g, x0, y0, x1, y1);
+  doseXAxis(g, ax, sx, y1, `concentration${unitS() ? " (" + S.unit + ")" : ""}`);
+  g.strokeStyle = css("--dim"); g.setLineDash([4, 4]); g.beginPath(); g.moveTo(x0, sy(0)); g.lineTo(x1, sy(0)); g.stroke(); g.setLineDash([]);
+  g.fillStyle = css("--ink"); g.globalAlpha = .75;
+  used.forEach((x, j) => { g.beginPath(); g.arc(sx(ax.x(x.c)), sy(ys[j]), 3.4, 0, 7); g.fill(); }); g.globalAlpha = 1;
+  g.strokeStyle = css("--pB"); g.lineWidth = 2; g.beginPath(); let first = true;
+  for(const c of S.levels){ if(!I.iso.has(c)) continue; const X = sx(ax.x(c)), Y = sy(I.iso.get(c)); first ? g.moveTo(X, Y) : g.lineTo(X, Y); first = false; }
+  g.stroke(); g.lineWidth = 1;
+  $("shiftCap").textContent = `how far the ${S.marker.ch}-negative peak has moved from the control, per well (dots) · orange = fitted non-decreasing shift` +
+    (S.af === "iso" ? " (subtracted)" : S.af === "well" ? " (each well's own dot is subtracted)" : "");
+}
+
+/* ======================================================================
+   Tables and text
+   ====================================================================== */
+function drawStats(){
+  const r = curReadout(), st = wellStats(); S.stats = st;
+  const A = S.popNames[0], B = S.popNames[1], n = st.pair.n;
+  $("statTitle").textContent = `${r.label} · n = ${n} wells`;
+  const t = st.pair.t, w = st.pair.w;
+  let html = `<table class="tbl"><tr><th>population difference, paired by well</th><th>n wells</th><th>${esc(B)} − ${esc(A)}</th><th>95% CI</th><th>paired t</th><th>p</th><th>Wilcoxon p</th></tr>
+    <tr><td>all wells (all concentrations)</td><td>${n}</td><td>${fmt(t.mean)}</td><td>${fmt(t.lo)} – ${fmt(t.hi)}</td>
+      <td>${fmt(t.t)}</td><td class="${sigCls(t.p)}">${fmtP(t.p)}</td><td class="${sigCls(w.p)}">${fmtP(w.p)}</td></tr>`;
+  if(st.pair.ratio) html += `<tr><td>as a ratio ${esc(B)} / ${esc(A)} (geometric mean)</td><td>${n}</td><td>× ${fmt(st.pair.ratio.est)}</td>
+      <td>× ${fmt(st.pair.ratio.lo)} – ${fmt(st.pair.ratio.hi)}</td><td></td><td class="${sigCls(st.pair.ratio.p)}">${fmtP(st.pair.ratio.p)}</td><td></td></tr>`;
+  html += `</table>`;
+  let verdict = "";
+  if(n >= 3 && isFinite(t.p)){
+    const dir = t.mean > 0 ? `higher in <b style="color:var(--pB)">${esc(B)}</b>` : `higher in <b style="color:var(--pA)">${esc(A)}</b>`;
+    verdict = t.p < 0.05
+      ? `Across ${n} wells, the ${esc(r.label)} is ${dir} (mean difference ${fmt(t.mean)}, 95% CI ${fmt(t.lo)} to ${fmt(t.hi)}, paired t p = ${fmtP(t.p)}).`
+      : `Across ${n} wells there is no clear difference between the populations (mean difference ${fmt(t.mean)}, 95% CI ${fmt(t.lo)} to ${fmt(t.hi)}, p = ${fmtP(t.p)}).`;
+  } else verdict = `<span class="muted">Needs at least 3 wells with enough cells of both populations for a paired test.</span>`;
+  $("pairOut").innerHTML = html + `<div class="verdict">${verdict} <span class="muted">Each well contributes one paired difference, so well-to-well variation is accounted for and the cells are not counted as replicates.</span></div>`;
+
+  // per concentration
+  let tc = `<tr><th>concentration${S.unit ? ` <span class="u">(${esc(S.unit)})</span>` : ""}</th><th>wells</th><th>${esc(A)}</th><th>${esc(B)}</th><th>${esc(B)} − ${esc(A)}</th><th>paired p</th><th>p (Holm)</th></tr>`;
+  for(const row of st.per) tc += `<tr><td>${row.c === 0 ? "0 (control)" : fmtConc(row.c)}</td><td>${row.n}</td><td>${fmt(row.A)}</td><td>${fmt(row.B)}</td><td>${fmt(row.d)}</td>
+      <td class="${sigCls(row.p)}">${row.n >= 3 ? fmtP(row.p) : `<span title="needs ≥ 3 wells at this concentration">n &lt; 3</span>`}</td>
+      <td class="${sigCls(row.padj)}">${isFinite(row.padj) ? fmtP(row.padj) : "—"}</td></tr>`;
+  $("tConc").innerHTML = tc;
+
+  // trend
+  const tr = st.trend, line = (lab, s, col) => `<tr><td><span class="k" style="background:${col}"></span>${lab}</td><td>${s.n}</td><td>${fmt(s.rho)}</td><td class="${sigCls(s.p)}">${fmtP(s.p)}</td></tr>`;
+  let th = `<table class="tbl"><tr><th>does it change with concentration?</th><th>n wells</th><th>Spearman ρ</th><th>p</th></tr>` +
+    line(`${esc(A)}`, tr.A, css("--pA")) + line(`${esc(B)}`, tr.B, css("--pB")) +
+    line(`difference ${esc(B)} − ${esc(A)}`, tr.D, css("--ink")) + `</table>`;
+  const tv = isFinite(tr.D.p) ? (tr.D.p < 0.05
+      ? `The gap between the populations ${tr.D.rho > 0 ? "widens" : "narrows"} with concentration (ρ = ${fmt(tr.D.rho)}, p = ${fmtP(tr.D.p)}): the two populations respond differently to the drug.`
+      : `No evidence that the gap between the populations changes with concentration (ρ = ${fmt(tr.D.rho)}, p = ${fmtP(tr.D.p)}).`) : "";
+  $("trendOut").innerHTML = th + `<div class="verdict">${tv} <span class="muted">Spearman correlation across wells: it asks whether values rise (or fall) steadily with dose, without assuming a curve shape. The control ranks lowest.</span></div>`;
+}
+
+function drawModel(){
+  const out = $("modelOut"), tb = $("tModel");
+  const m = S.model;
+  if(!m){ tb.innerHTML = ""; out.innerHTML = `<div class="hint" style="margin-top:8px">fitting…</div>`; return; }
+  if(m.error){ tb.innerHTML = ""; out.innerHTML = `<div class="hint" style="margin-top:8px">Model not fitted: ${esc(m.error)}.</div>`; return; }
+  const A = S.popNames[0], B = S.popNames[1];
+  const isNB = S.mKind === "nb", ratio = isNB ? "rate ratio" : "odds ratio";
+  const per = S.mDose === "log" ? "per 10× concentration" : "per dose step";
+  const lowest = S.levels[0] === 0 ? "in control wells" : `at ${fmtConc(S.levels[0])}${unitS()}`;
+  const highest = `at ${fmtConc(S.levels[S.levels.length - 1])}${unitS()}`;
+  const row = (lab, r, help) => `<tr><td class="l">${lab}<div class="hint">${help}</div></td><td>× ${fmt(Math.exp(r.est))}</td>
+      <td>× ${fmt(Math.exp(r.lo))} – ${fmt(Math.exp(r.hi))}</td><td class="${sigCls(r.p)}">${fmtP(r.p)}</td></tr>`;
+  let h = `<tr><th>effect (${ratio})</th><th>estimate</th><th>95% CI</th><th>p</th></tr>`;
+  h += row(`${esc(B)} vs ${esc(A)}, ${lowest}`, m.popLow, "the population difference without drug");
+  h += row(`${esc(B)} vs ${esc(A)}, ${highest}`, m.popHigh, "the population difference at the top dose");
+  h += row(`concentration effect in ${esc(A)}, ${per}`, m.doseA, "how fast foci rise with dose");
+  h += row(`concentration effect in ${esc(B)}, ${per}`, m.doseB, "");
+  h += row(`difference in dose response (${esc(B)} ÷ ${esc(A)})`, m.inter, "interaction: × 1 means both populations respond alike");
+  if(m.dna) h += row("DNA content, per doubling", m.dna, "cell-cycle adjustment");
+  tb.innerHTML = h;
+  const what = isNB ? "foci counts" : `the odds of a nucleus having ≥ ${S.k} foci`;
+  const iv = m.inter.p < 0.05
+    ? `The populations respond <b>differently</b> to the drug: ${what} rise ${Math.exp(m.inter.est) > 1 ? "faster" : "slower"} with concentration in ${esc(B)} than in ${esc(A)} (× ${fmt(Math.exp(m.inter.est))} ${per}, p = ${fmtP(m.inter.p)}).`
+    : `No evidence that the populations respond differently to the drug (interaction × ${fmt(Math.exp(m.inter.est))}, p = ${fmtP(m.inter.p)}).`;
+  out.innerHTML = `<div class="verdict">${iv}</div>
+    <div class="hint" style="margin-top:8px">${isNB ? `Negative binomial regression (dispersion α = ${fmt(m.alpha, 3)}) on every nucleus's foci count` : `Logistic regression on whether each nucleus has ≥ ${S.k} foci`},
+    with population × concentration${m.dna ? " and DNA content" : ""}. Standard errors are clustered by well (${m.G} wells, ${Math.round(m.N).toLocaleString()} nuclei),
+    so the wells — not the cells — set the uncertainty; CIs and p use t with ${m.G - 1} df.
+    ${S.mDose === "log" ? "Concentration on a log scale, the control placed one dose step below the lowest dose." : "Concentration as dose steps (control = 0, each next dose +1)."}
+    ${m.G < 10 ? `<br><span style="color:var(--warn)">With fewer than ~10 wells, clustered standard errors are approximate — lean on the paired well-level tests above.</span>` : ""}</div>`;
+  $("modelTitle").textContent = `${isNB ? "negative binomial" : "logistic"} · clustered by well`;
+}
+
+function drawWells(){
+  const r = curReadout(), A = S.popNames[0], B = S.popNames[1];
+  let h = `<tr><th>well</th><th>conc.${S.unit ? ` <span class="u">(${esc(S.unit)})</span>` : ""}</th><th>${esc(A)} n</th><th>${esc(B)} n</th><th>${esc(A)}</th><th>${esc(B)}</th><th>${esc(B)} − ${esc(A)}</th><th>use</th></tr>`;
+  const all = S.wellKeys.map((w, k) => S.wells.find(x => x.w === w) || { w, k, c:NaN, on:false, nA:0, nB:0, rA:NaN, rB:NaN, d:NaN, noConc:true });
+  for(const x of all){
+    const low = (x.nA < S.minCells || x.nB < S.minCells) && !x.noConc;
+    h += `<tr class="${x.on ? "" : "off"}"><td>${esc(x.w)}</td><td>${x.noConc ? "<span class='hint'>none</span>" : fmtConc(x.c)}</td>
+      <td style="${low && x.nA < S.minCells ? "color:var(--warn)" : ""}">${x.nA}</td><td style="${low && x.nB < S.minCells ? "color:var(--warn)" : ""}">${x.nB}</td>
+      <td>${fmt(x.rA)}</td><td>${fmt(x.rB)}</td><td>${fmt(x.d)}</td>
+      <td>${x.noConc ? "" : `<input type="checkbox" data-w="${esc(x.w)}" ${x.on ? "checked" : ""}>`}</td></tr>`;
+  }
+  $("tWell").innerHTML = h;
+  $("tWell").querySelectorAll("[data-w]").forEach(cb => cb.onchange = () => {
+    if(cb.checked) S.wellOff.delete(cb.dataset.w); else S.wellOff.add(cb.dataset.w); refresh(); });
+  $("wellNote").textContent = `${r.label} · cells below ${S.minCells} in a population are shown in orange and leave that well out of the paired tests`;
+}
+
+function drawWarnings(){
+  const w = [], used = S.wells.filter(x => x.on);
+  const perConc = S.levels.map(c => used.filter(x => x.c === c).length);
+  if(!S.conc.size) w.push(`<div class="warn"><b>No concentrations yet.</b> Pick the column holding the concentration, or type one line per well in the sidebar (<code>B03 0.1</code>) and press Apply.</div>`);
+  else if(S.levels.length < 2) w.push(`<div class="warn"><b>Only one concentration.</b> The population comparison works, but there is no dose series to test.</div>`);
+  if(S.levels.length && perConc.every(n => n === 1))
+    w.push(`<div class="warn info"><b>One well per concentration.</b> Each dose is then n = 1, so doses cannot be tested against each other one by one. The tests below use the wells across the series instead: the paired population difference (one pair per well) and a trend with concentration.</div>`);
+  const pairs = used.filter(x => isFinite(x.d)).length;
+  if(S.conc.size && pairs < used.length) w.push(`<div class="warn"><b>${used.length - pairs} well${used.length - pairs > 1 ? "s have" : " has"} fewer than ${S.minCells} cells</b> in one of the populations and ${used.length - pairs > 1 ? "are" : "is"} left out of the paired tests. Lower the minimum in the sidebar if that is too strict.</div>`);
+  const nA = used.reduce((s, x) => s + x.nA, 0), nB = used.reduce((s, x) => s + x.nB, 0);
+  if(nA + nB && Math.min(nA, nB) / (nA + nB) < 0.03)
+    w.push(`<div class="warn"><b>One population is very small</b> (${(100 * Math.min(nA, nB) / (nA + nB)).toFixed(1)}% of nuclei). Check the gate.</div>`);
+  const R = afSuspicion();
+  if(S.af === "none" && S.marker.kind === "int" && isFinite(R) && R > 1.5)
+    w.push(`<div class="warn"><b>The ${esc(S.marker.ch)}-negative nuclei get ×${R.toFixed(1)} brighter with dose.</b> That is typical of an autofluorescent compound (doxorubicin, daunorubicin, mitoxantrone…) and pushes negative cells over the threshold at high doses. See <i>Marker across the dose series</i>, and consider <i>Autofluorescence correction</i> under Populations.</div>`);
+  if(S.cellset !== "all" && !isFinite(S.dnaPeak)) w.push(`<div class="warn"><b>No DNA-content column found,</b> so all nuclei are used.</div>`);
+  $("warnings").innerHTML = w.join("");
+}
+
+/* ======================================================================
+   Refresh
+   ====================================================================== */
+let modelTimer = null, modelGen = 0;
+function refresh(opts = {}){
+  if(!S.rows) return;
+  buildQCKeep();                      // cell filter first: everything else sees only passing cells
+  buildMarker();                      // cached; recomputed only when it changes
+  if(opts.pop !== false || S.af !== "none") buildPop();
+  buildActive(); buildAgg(); buildWellTable();
+  // header + gate counts
+  let nA = 0, nB = 0; for(const x of S.wells) if(x.on){ nA += x.nA; nB += x.nB; }
+  $("sCells").textContent = (nA + nB).toLocaleString();
+  $("sWells").textContent = S.wells.filter(x => x.on).length;
+  $("sDoses").textContent = S.levels.length;
+  const tot = nA + nB || 1;
+  $("ctA").textContent = `${(100 * nA / tot).toFixed(0)}%`; $("ctB").textContent = `${(100 * nB / tot).toFixed(0)}%`;
+  $("doseTitle").textContent = curReadout().label;
+  $("concNote").textContent = `${S.conc.size} of ${S.wellKeys.length} wells`;
+  const dh = $("dnaHint");
+  if(isFinite(S.dnaPeak)) dh.textContent = S.cellset === "all" ? "2N and 4N peaks of DNA content (integrated nuclear stain)"
+      : `${S.cellset === "g1" ? "G1" : "G2/M"} window shaded · ${(nA + nB).toLocaleString()} nuclei kept`;
+  drawWarnings(); drawQC(); drawGate(); drawDNA(); drawAF();
+  drawDose(); drawDiff(); drawSurv(); drawBins(); drawSuper();
+  drawStats(); drawWells();
+  // the model is the slow part: run it once things stop changing
+  S.model = null; drawModel();
+  clearTimeout(modelTimer); const gen = ++modelGen;
+  modelTimer = setTimeout(() => {
+    if(gen !== modelGen) return;
+    try{ S.model = fitModel(); }catch(e){ S.model = { error:e.message }; console.error(e); }
+    if(gen === modelGen) drawModel();
+  }, opts.fast ? 30 : 450);
+}
+
+/* ======================================================================
+   UI
+   ====================================================================== */
+function otsu(xs){
+  if(xs.length < 10) return NaN;
+  const lo = xs[0], hi = xs[xs.length - 1], NB = 256, h = new Float64Array(NB), bw = (hi - lo) / NB || 1;
+  for(const x of xs) h[Math.min(NB - 1, Math.floor((x - lo) / bw))]++;
+  let sum = 0; for(let b = 0; b < NB; b++) sum += b * h[b];
+  let wB = 0, sB = 0, best = -1, tb = 0;
+  for(let b = 0; b < NB; b++){
+    wB += h[b]; if(!wB) continue; const wF = xs.length - wB; if(!wF) break;
+    sB += b * h[b]; const mB = sB / wB, mF = (sum - sB) / wF, v = wB * wF * (mB - mF) ** 2;
+    if(v > best){ best = v; tb = b; }
+  }
+  return lo + (tb + 1) * bw;
+}
+function setMarker(key){
+  S.marker = S.markers.find(m => m.key === key) || S.markers[0];
+  S.gate = null; S.mk = null; S.mkKey = ""; S.peakCache = null;
+  const reps = S.markers.filter(m => m.kind === "int" && m.key.startsWith("mean_") && m.ch !== S.marker.ch);
+  $("afRep").innerHTML = reps.map(m => `<option value="${esc(m.key)}">${esc(m.ch)}</option>`).join("");
+  $("afMode").querySelector('[value="rep"]').disabled = !reps.length;
+  if(!reps.some(m => m.key === S.afRep)) S.afRep = reps.length ? reps[0].key : "";
+  $("afRep").value = S.afRep;
+  if(S.af === "rep" && !reps.length){ S.af = "none"; $("afMode").value = "none"; }
+  $("afBox").style.display = S.marker.kind === "pos" ? "none" : "";
+  buildMarker();
+  if(S.marker.kind === "int"){ const G = gateGeom(); S.gate = G; S.thr = Math.pow(10, otsu(G.xs)); }
+  $("thr").disabled = $("bAuto").disabled = S.marker.kind === "pos";
+  $("thr").value = S.marker.kind === "pos" ? "" : fmtThrV(S.thr);
+  S.popNames = [`${S.marker.ch}−`, `${S.marker.ch}+`];
+  $("nameA").value = S.popNames[0]; $("nameB").value = S.popNames[1];
+}
+const fmtThrV = v => !isFinite(v) ? "" : (Math.abs(v) >= 100 ? v.toFixed(0) : v.toPrecision(4));
+
+function buildUI(){
+  $("foci").innerHTML = S.fociCh.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+  $("foci").value = S.foci;
+  $("plateBox").style.display = S.plates.length > 1 ? "" : "none";
+  $("plate").innerHTML = S.plates.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join("") +
+    (S.plates.length > 1 ? `<option value="*">all plates together</option>` : "");
+  $("marker").innerHTML = S.markers.map(m => `<option value="${esc(m.key)}">${esc(m.label)}</option>`).join("");
+  $("marker").value = S.marker.key;
+  $("concCol").innerHTML = `<option value="">— type the concentrations below —</option>` +
+    S.concCands.map(c => `<option value="${esc(c)}">from column: ${esc(c)}</option>`).join("");
+  $("concCol").value = S.concCands[0] || "";
+  $("deadBox").style.display = S.deadCol ? "" : "none";
+  $("adjBox").style.display = S.dnaCol ? "" : "none";
+  $("cellset").disabled = !S.dnaCol;
+  buildReadoutOptions();
+}
+function buildReadoutOptions(){
+  const keep = S.readout;
+  $("readout").innerHTML = readouts().map(r => `<option value="${r.key}">${esc(r.label)}</option>`).join("");
+  S.readout = readouts().some(r => r.key === keep) ? keep : "mean";
+  $("readout").value = S.readout;
+}
+function wire(){
+  $("foci").onchange = e => { S.foci = e.target.value; buildReadoutOptions(); refresh(); };
+  $("plate").onchange = e => { S.plate = e.target.value; buildWells(); buildDNA(); S.qcSig = "~";
+    concFromColumn($("concCol").value); concToText(); S.gate = null; S.mkKey = ""; refresh(); };
+  $("cellset").onchange = e => { S.cellset = e.target.value; refresh({ pop:false }); };
+  $("exDead").onchange = e => { S.exDead = e.target.checked; refresh({ pop:false }); };
+  $("marker").onchange = e => { setMarker(e.target.value); refresh(); };
+  const afChanged = () => {
+    $("afRepBox").style.display = S.af === "rep" ? "" : "none";
+    S.mkKey = ""; buildMarker();
+    // the old threshold was placed on uncorrected intensities: place it again
+    const G = gateGeom(); S.gate = G; const t = otsu(G.xs);
+    if(isFinite(t)){ S.thr = Math.pow(10, t); $("thr").value = fmtThrV(S.thr); }
+    refresh();
+    toast(S.af === "none" ? "Correction off — threshold re-placed on the raw intensities."
+                          : "Threshold re-placed on the corrected intensities. Check it in the histogram.", 3500);
+  };
+  $("afMode").onchange = e => { S.af = e.target.value; afChanged(); };
+  $("afRep").onchange = e => { S.afRep = e.target.value; S.peakCache = null; afChanged(); };
+  $("bAuto").onclick = () => { const G = S.gate || gateGeom(); S.thr = Math.pow(10, otsu(G.xs)); $("thr").value = fmtThrV(S.thr); refresh(); };
+  $("thr").onchange = () => { const v = Number($("thr").value.replace(",", ".")); if(isFinite(v) && v > 0){ S.thr = v; refresh(); }
+    else { toast("The threshold must be a positive number."); $("thr").value = fmtThrV(S.thr); } };
+  $("nameA").oninput = e => { S.popNames[0] = e.target.value || "population 1"; refresh({ pop:false, fast:true }); };
+  $("nameB").oninput = e => { S.popNames[1] = e.target.value || "population 2"; refresh({ pop:false, fast:true }); };
+  $("concCol").onchange = e => { concFromColumn(e.target.value); concToText(); refresh({ pop:false }); };
+  $("bConc").onclick = () => { concFromText(); $("concCol").value = ""; refresh({ pop:false }); };
+  $("unit").onchange = e => { S.unit = e.target.value; refresh({ pop:false, fast:true }); };
+  $("readout").onchange = e => { S.readout = e.target.value; refresh({ pop:false }); };
+  $("kmin").onchange = e => { S.k = Math.max(1, Math.round(+e.target.value || 3)); e.target.value = S.k; buildReadoutOptions(); refresh({ pop:false }); };
+  $("minCells").onchange = e => { S.minCells = Math.max(1, Math.round(+e.target.value || 20)); e.target.value = S.minCells; refresh({ pop:false }); };
+  $("bins").onchange = () => refresh({ pop:false, fast:true });
+  $("mKind").onchange = e => { S.mKind = e.target.value; refresh({ pop:false, fast:true }); };
+  $("mDose").onchange = e => { S.mDose = e.target.value; refresh({ pop:false, fast:true }); };
+  $("mAdj").onchange = e => { S.mAdj = e.target.checked; refresh({ pop:false, fast:true }); };
+  // drag the gate
+  const c = $("cGate"); let dragging = false;
+  const setFromX = ev => { const m = S.gateMap; if(!m || S.marker.kind === "pos") return;
+    const r = c.getBoundingClientRect(), x = ev.clientX - r.left;
+    const v = m.lo + (x - m.x0) / (m.x1 - m.x0) * (m.hi - m.lo);
+    S.thr = Math.pow(10, Math.max(m.lo, Math.min(m.hi, v))); $("thr").value = fmtThrV(S.thr); };
+  c.onmousedown = ev => { dragging = true; setFromX(ev); refresh(); };
+  addEventListener("mousemove", ev => { if(!dragging) return; setFromX(ev);
+    cancelAnimationFrame(wire.raf); wire.raf = requestAnimationFrame(() => refresh()); });
+  addEventListener("mouseup", () => dragging = false);
+  $("bExport").onclick = exportCSV;
+  $("qcClear").onclick = () => { for(const k of S.qcKeys) S.qc[k.key].on = false; syncQC(); buildReadoutOptions(); refresh(); };
+  $("bNew").onclick = () => { $("drop").classList.remove("hide"); $("file").value = ""; };
+  let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => S.rows && refresh({ pop:false, fast:true }), 150); });
+}
+
+/* ---- export ----------------------------------------------------------- */
+function exportCSV(){
+  if(!S.wells.length){ toast("Nothing to export yet."); return; }
+  const A = S.popNames[0], B = S.popNames[1], R = readouts();
+  const q = s => /[",\n]/.test(s) ? `"${String(s).replace(/"/g, '""')}"` : s;
+  const head = ["well", `concentration${S.unit ? "_" + S.unit.replace("µ", "u").replace("/", "per") : ""}`, "included",
+    `n_${A}`, `n_${B}`, ...R.flatMap(r => [`${r.key}_${A}`, `${r.key}_${B}`])];
+  const lines = [head.map(q).join(",")];
+  for(const x of S.wells){
+    const [a, b] = S.agg[x.k];
+    lines.push([x.w, x.c, x.on ? 1 : 0, a.n, b.n, ...R.flatMap(r => [readoutValue(a, r.key), readoutValue(b, r.key)])]
+      .map(v => typeof v === "number" ? (isFinite(v) ? +v.toPrecision(8) : "") : q(v)).join(","));
+  }
+  const st = S.stats, t = st.pair.t, m = S.model;
+  lines.push(
+    `# file,${q(S.name)}`, `# foci channel,${S.foci}`,
+    `# populations,${q(`${S.marker.key}${S.marker.kind === "int" ? " > " + fmtThrV(S.thr) : ""} = ${B}; otherwise ${A}`)}`,
+    `# autofluorescence correction,${q(S.af === "none" ? "none" : S.af === "iso" ? "negative-peak shift fitted across concentrations (isotonic)" : S.af === "well" ? "negative-peak shift per well" : `per-cell compensation: ${S.marker.key} - ${S.afInfo && S.afInfo.k.toPrecision(4)} x (${S.afRep} - ${S.afInfo && fInt(S.afInfo.rref)})`)}`,
+    `# cell filter,${q(S.qcKeys.filter(k => S.qc[k.key].on).map(k => `${k.key} ${fmtQ(S.qc[k.key].lo)}-${fmtQ(S.qc[k.key].hi)}`).join("; ") || "none")}`,
+    `# cells,${q(S.cellset === "all" ? "all nuclei" : S.cellset === "g1" ? "G1 only" : "G2/M only")}${S.deadCol && S.exDead ? " (dead/dying excluded)" : ""}`,
+    `# min cells per population per well,${S.minCells}`, `# readout for the tests,${q(curReadout().label)}`,
+    `# paired difference ${q(B)} - ${q(A)},mean ${fmt(t.mean, 4)},95% CI ${fmt(t.lo, 4)} to ${fmt(t.hi, 4)},paired t p ${fmtP(t.p)},Wilcoxon p ${fmtP(st.pair.w.p)},n wells ${st.pair.n}`,
+    `# Spearman trend with concentration,${q(A)} rho ${fmt(st.trend.A.rho, 3)} p ${fmtP(st.trend.A.p)},${q(B)} rho ${fmt(st.trend.B.rho, 3)} p ${fmtP(st.trend.B.p)},difference rho ${fmt(st.trend.D.rho, 3)} p ${fmtP(st.trend.D.p)}`);
+  if(m && !m.error){
+    const e = r => `${fmt(Math.exp(r.est), 4)} (95% CI ${fmt(Math.exp(r.lo), 4)}-${fmt(Math.exp(r.hi), 4)}) p ${fmtP(r.p)}`;
+    lines.push(`# model,${S.mKind === "nb" ? "negative binomial" : `logistic (>= ${S.k} foci)`},dose ${S.mDose === "log" ? "log10" : "steps"},clustered by well (${m.G} wells; t df ${m.G - 1})${m.dna ? ",adjusted for DNA content" : ""}`,
+      `# ${q(B)} vs ${q(A)} at lowest dose,${e(m.popLow)}`, `# ${q(B)} vs ${q(A)} at highest dose,${e(m.popHigh)}`,
+      `# dose effect in ${q(A)},${e(m.doseA)}`, `# dose effect in ${q(B)},${e(m.doseB)}`, `# interaction (${q(B)} / ${q(A)}),${e(m.inter)}`);
+  }
+  // byte-order mark: Excel on Windows otherwise misreads µ and − in the names
+  const blob = new Blob(["\uFEFF" + lines.join("\n") + "\n"], { type:"text/csv;charset=utf-8" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  a.download = (S.name.replace(/\.(csv|gz|tsv|txt)+$/i, "") || "foci") + "_foci_by_population.csv";
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+/* ---- loading ---------------------------------------------------------- */
+const busy = on => { const b = $("busy"); b.textContent = "reading…"; b.classList.toggle("on", on); };
+const progress = (f, rows) => { $("busy").textContent = `reading… ${Math.round(100 * f)}%  ·  ${rows.toLocaleString()} rows`; };
+async function load(file){
+  $("err").textContent = ""; busy(true);
+  await new Promise(r => setTimeout(r, 30));
+  try{
+    const p = await readTable(file, progress);
+    Object.assign(S, { name:file.name, header:p.header, cols:p.cols, rows:p.rows, wellOff:new Set(), model:null, gate:null });
+    S.qc = {}; S.qcKeep = null; S.qcSig = "";
+    detect(); buildWells(); buildDNA(); detectQC();
+    buildUI(); buildQCUI(); setMarker(S.marker.key);
+    concFromColumn($("concCol").value); concToText();
+    $("sFile").textContent = file.name;
+    $("drop").classList.add("hide"); $("app").classList.add("ready");
+    refresh({ fast:true });
+  }catch(e){ $("err").textContent = e.message || String(e); console.error(e); }
+  finally{ busy(false); }
+}
+$("pick").onclick = () => $("file").click();
+$("file").onchange = () => $("file").files[0] && load($("file").files[0]);
+["dragenter","dragover"].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); $("dz").classList.add("hot"); }));
+document.addEventListener("dragleave", e => { if(e.relatedTarget === null) $("dz").classList.remove("hot"); });
+document.addEventListener("drop", e => { e.preventDefault(); $("dz").classList.remove("hot"); const f = e.dataTransfer.files[0]; if(f) load(f); });
+wire();
+if(window.EMBEDDED_CSV){
+  load(new File([window.EMBEDDED_CSV], window.EMBEDDED_NAME || "embedded.csv"));
+}
+</script>
+</body>
+</html>

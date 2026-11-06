@@ -48,6 +48,7 @@ import math
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass, asdict, field
 from itertools import combinations
 from pathlib import Path
@@ -153,8 +154,11 @@ class Config:
     foci_min_sigma: float = 1.0
     foci_max_sigma: float = 4.0
     foci_num_sigma: int = 5
+    foci_threads: int = 0                    # 0 = auto (up to 8 CPU cores)
     foci_log_threshold: float = 0.02
     foci_k: float = 3.0                      # robust SDs over in-nucleus background
+    foci_edge_guard: bool = False            # drop "foci" that are glow from a brighter neighbour
+    foci_min_peak: Optional[float] = None    # absolute floor on focus height above local background
     foci_abs_threshold: Optional[float] = None
     foci_h: float = 0.0                      # h-maxima depth (0 = auto)
     foci_min_area: int = 3
@@ -724,11 +728,16 @@ class FociParams:
     h: float
     bg_clip: bool
     source: str = "manual"
+    edge_guard: bool = False
+    edge_ring: int = 2
+    min_peak: Optional[float] = None
 
     def describe(self) -> str:
         return (f"sigma {self.min_sigma:.2f}-{self.max_sigma:.2f} px, "
                 f"tophat r={self.tophat_radius}, area {self.min_area}-{self.max_area} px, "
-                f"upsample x{self.upsample} [{self.source}]")
+                f"upsample x{self.upsample}, k={self.k:g}, LoG threshold {self.log_threshold:g}"
+                f"{', min peak ' + format(self.min_peak, 'g') if self.min_peak else ''}"
+                f"{', edge guard ' + str(self.edge_ring) + ' px' if self.edge_guard else ''} [{self.source}]")
 
 
 def derive_foci_params(cfg: Config, pixel_um: Optional[float]) -> FociParams:
@@ -751,7 +760,9 @@ def derive_foci_params(cfg: Config, pixel_um: Optional[float]) -> FociParams:
         log_threshold=cfg.foci_log_threshold,
         k=cfg.foci_k, method=cfg.foci_method,
         abs_threshold=cfg.foci_abs_threshold, h=cfg.foci_h,
-        bg_clip=cfg.foci_bg_clip, source="manual")
+        bg_clip=cfg.foci_bg_clip, source="manual",
+        edge_guard=getattr(cfg, "foci_edge_guard", False),
+        min_peak=getattr(cfg, "foci_min_peak", None))
 
     px = cfg.pixel_size_um or pixel_um
     if not cfg.foci_auto_scale or not px or px <= 0:
@@ -782,7 +793,36 @@ def derive_foci_params(cfg: Config, pixel_um: Optional[float]) -> FociParams:
         log_threshold=cfg.foci_log_threshold, k=cfg.foci_k,
         method=cfg.foci_method, abs_threshold=cfg.foci_abs_threshold,
         h=cfg.foci_h, bg_clip=cfg.foci_bg_clip,
-        source=f"auto from {px:.3f} um/px, focus {cfg.foci_diameter_um} um")
+        source=f"auto from {px:.3f} um/px, focus {cfg.foci_diameter_um} um",
+        edge_guard=getattr(cfg, "foci_edge_guard", False),
+        edge_ring=int(max(2, round(1.5 * r_px))),
+        min_peak=getattr(cfg, "foci_min_peak", None))
+
+
+def _label_median(values: np.ndarray, labels: np.ndarray,
+                  ids: np.ndarray) -> np.ndarray:
+    """Median of `values` per label in `ids` (NaN where a label has no pixels).
+
+    Same result as scipy.ndimage.median(values, labels, ids) - including the
+    mean of the two middle values for even counts - but with one sort for all
+    labels instead of ndimage's per-label selection, which is slow with
+    hundreds of nuclei in a field."""
+    sel = labels > 0
+    lab = labels[sel].astype(np.int64)
+    val = values[sel].astype(np.float64)
+    out = np.full(len(ids), np.nan)
+    if lab.size == 0:
+        return out
+    order = np.lexsort((val, lab))
+    lab, val = lab[order], val[order]
+    n_lab = int(max(lab.max(), ids.max())) + 1
+    counts = np.bincount(lab, minlength=n_lab)
+    starts = np.concatenate([[0], np.cumsum(counts)[:-1]])
+    n = counts[ids]
+    ok = n > 0
+    st = starts[ids][ok]
+    out[ok] = 0.5 * (val[st + (n[ok] - 1) // 2] + val[st + n[ok] // 2])
+    return out
 
 
 def _clipped_bg(th: np.ndarray, labels: np.ndarray, ids: np.ndarray,
@@ -793,19 +833,195 @@ def _clipped_bg(th: np.ndarray, labels: np.ndarray, ids: np.ndarray,
     This matters most in heavily damaged nuclei: at high foci burden the naive
     median sits inside the foci distribution and the threshold runs away
     upward, so the most interesting cells are the ones that get undercounted."""
-    med = np.asarray(ndi.median(th, labels, ids), dtype=float)
-    mad = np.asarray(ndi.median(np.abs(th - _label_lut(labels, ids, med)),
-                                labels, ids), dtype=float)
+    med = _label_median(th, labels, ids)
+    mad = _label_median(np.abs(th - _label_lut(labels, ids, med)), labels, ids)
     for _ in range(max(0, iters)):
         hi = _label_lut(labels, ids, med + 3.0 * 1.4826 * np.maximum(mad, 1e-9))
         kept = np.where(th <= hi, labels, 0)
-        new_med = np.asarray(ndi.median(th, kept, ids), dtype=float)
-        new_mad = np.asarray(ndi.median(np.abs(th - _label_lut(labels, ids, new_med)),
-                                        kept, ids), dtype=float)
+        new_med = _label_median(th, kept, ids)
+        new_mad = _label_median(np.abs(th - _label_lut(labels, ids, new_med)), kept, ids)
         ok = np.isfinite(new_med) & np.isfinite(new_mad) & (new_mad > 0)
         med = np.where(ok, new_med, med)
         mad = np.where(ok, new_mad, mad)
     return med + k * 1.4826 * mad
+
+
+def _prune_overlapping(blobs: np.ndarray, overlap: float) -> np.ndarray:
+    """Drop the smaller of any two blobs overlapping by more than `overlap`.
+
+    Same rule as skimage.feature.blob_log. Uses skimage's own routine when
+    available (it is private, so fall back to an equivalent if it moves)."""
+    if len(blobs) < 2:
+        return blobs
+    try:
+        from skimage.feature.blob import _prune_blobs
+        return _prune_blobs(blobs, overlap, sigma_dim=1)
+    except (ImportError, TypeError):
+        from scipy.spatial import cKDTree
+        b = blobs.copy()
+        r = b[:, 2] * math.sqrt(2)
+        for i, j in cKDTree(b[:, :2]).query_pairs(2 * r.max()):
+            if b[i, 2] == 0 or b[j, 2] == 0:
+                continue
+            d = math.hypot(*(b[i, :2] - b[j, :2]))
+            r1, r2 = r[i], r[j]
+            if d > r1 + r2:
+                continue
+            if d <= abs(r1 - r2):
+                frac = 1.0
+            else:
+                a1 = math.acos(np.clip((d * d + r1 * r1 - r2 * r2) / (2 * d * r1), -1, 1))
+                a2 = math.acos(np.clip((d * d + r2 * r2 - r1 * r1) / (2 * d * r2), -1, 1))
+                area = (r1 * r1 * a1 + r2 * r2 * a2 - 0.5 * math.sqrt(abs(
+                    (-d + r2 + r1) * (d - r2 + r1) * (d + r2 - r1) * (d + r2 + r1))))
+                frac = area / (math.pi * min(r1, r2) ** 2)
+            if frac > overlap:
+                if b[i, 2] > b[j, 2]:
+                    b[j, 2] = 0
+                else:
+                    b[i, 2] = 0
+        return b[b[:, 2] > 0]
+
+
+def log_seeds(th: np.ndarray, scale: float, params: "FociParams",
+              region: np.ndarray, threads: int = 0, tile: int = 64) -> np.ndarray:
+    """Laplacian-of-Gaussian focus seeds, in original-grid pixel coordinates.
+
+    Equivalent to running skimage.feature.blob_log on the whole (upsampled)
+    field and keeping the blobs that land in `region`, but computed only where
+    it can matter:
+
+    * The scale-space is filtered tile by tile, and only for tiles that
+      contain candidate pixels. Each tile is padded by the full Gaussian
+      support, so its filter values are identical to a whole-image filter.
+    * Local maxima outside `region` are dropped *before* the spacing and
+      overlap-pruning steps. On a 2048x2048 field blob_log finds tens of
+      thousands of noise maxima in the background between nuclei and then
+      spends minutes pruning them in pure Python, only for them to be thrown
+      away afterwards.
+    * Tiles run in parallel threads (scipy's filters release the GIL).
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    up = max(1, int(params.upsample))
+    src = ndi.zoom(th, up, order=1) if up > 1 else th
+    norm = np.clip(src / scale, 0, 1)
+    if norm.dtype not in (np.float32, np.float64):
+        norm = norm.astype(np.float64)
+    fdt = norm.dtype
+
+    # sigma list exactly as blob_log builds it (isotropic, linear spacing)
+    smin = np.full(2, params.min_sigma, dtype=fdt)
+    smax = np.full(2, params.max_sigma, dtype=fdt)
+    sigma_list = np.linspace(smin, smax, int(params.num_sigma))
+    pad = int(4.0 * float(params.max_sigma) + 0.5) + 2      # Gaussian support + 1
+    H, W = norm.shape
+    h0, w0 = region.shape
+
+    # which tiles (in the original grid) hold any candidate pixel
+    jobs = []
+    for ty in range(0, h0, tile):
+        for tx in range(0, w0, tile):
+            # +1: rounding maps upsampled rows/cols onto the next original one
+            if not region[ty:ty + tile + 1, tx:tx + tile + 1].any():
+                continue
+            cy0, cy1 = ty * up, min(H, (ty + tile) * up)
+            cx0, cx1 = tx * up, min(W, (tx + tile) * up)
+            jobs.append((cy0, cy1, cx0, cx1))
+    if not jobs:
+        return np.empty((0, 2), int)
+
+    thr = params.log_threshold
+
+    def run(job):
+        cy0, cy1, cx0, cx1 = job
+        wy0, wy1 = max(0, cy0 - pad), min(H, cy1 + pad)
+        wx0, wx1 = max(0, cx0 - pad), min(W, cx1 + pad)
+        win = norm[wy0:wy1, wx0:wx1]
+        cube = np.empty(win.shape + (len(sigma_list),), dtype=fdt)
+        for i, sg in enumerate(sigma_list):
+            cube[..., i] = -ndi.gaussian_laplace(win, sg) * np.mean(sg) ** 2
+        # candidates: above threshold, in the core, and in the region
+        oy_c = np.clip(np.round(np.arange(cy0, cy1) / up).astype(int), 0, h0 - 1)
+        ox_c = np.clip(np.round(np.arange(cx0, cx1) / up).astype(int), 0, w0 - 1)
+        reg = region[np.ix_(oy_c, ox_c)]
+        core = cube[cy0 - wy0:cy1 - wy0, cx0 - wx0:cx1 - wx0]
+        yy, xx, ss = np.nonzero((core > thr) & reg[..., None])
+        if not len(yy):
+            return None
+        # a peak equals the max of its 3x3x3 neighbourhood ('nearest' edges),
+        # exactly peak_local_max's test - checked only at the candidates
+        wy, wx = yy + (cy0 - wy0), xx + (cx0 - wx0)
+        val = cube[wy, wx, ss]
+        hi = np.array(cube.shape) - 1
+        is_pk = np.ones(len(val), bool)
+        for dy in (-1, 0, 1):
+            ny = np.clip(wy + dy, 0, hi[0])
+            for dx in (-1, 0, 1):
+                nx = np.clip(wx + dx, 0, hi[1])
+                for ds in (-1, 0, 1):
+                    if dy == dx == ds == 0:
+                        continue
+                    ns = np.clip(ss + ds, 0, hi[2])
+                    is_pk &= val >= cube[ny, nx, ns]
+        return (yy[is_pk] + cy0, xx[is_pk] + cx0, ss[is_pk], val[is_pk])
+
+    n_thr = threads if threads and threads > 0 else min(8, os.cpu_count() or 1)
+    if n_thr > 1 and len(jobs) > 1:
+        with ThreadPoolExecutor(max_workers=n_thr) as ex:
+            parts = [r for r in ex.map(run, jobs) if r is not None]
+    else:
+        parts = [r for r in map(run, jobs) if r is not None]
+    if not parts:
+        return np.empty((0, 2), int)
+    gy = np.concatenate([p[0] for p in parts]); gx = np.concatenate([p[1] for p in parts])
+    ss = np.concatenate([p[2] for p in parts]); val = np.concatenate([p[3] for p in parts])
+
+    # peak_local_max returns peaks brightest first (its min_distance=1 spacing
+    # step removes nothing for integer positions); keep that order, since the
+    # overlap pruning below is order-sensitive for equal scales
+    order = np.argsort(-val, kind="stable")
+    pts = np.stack([gy, gx, ss], axis=1)[order]
+
+    blobs = np.column_stack([pts[:, 0], pts[:, 1],
+                             sigma_list[pts[:, 2].astype(int), 0]]).astype(fdt)
+    blobs = _prune_overlapping(blobs, 0.5)
+    coords = np.round(blobs[:, :2] / up).astype(int)
+    return np.clip(coords, 0, np.array(region.shape) - 1)
+
+
+def drop_edge_leaks(foci_labels: np.ndarray, nuc_labels: np.ndarray,
+                    plane: np.ndarray, ring: int = 2) -> Tuple[np.ndarray, int]:
+    """Remove "foci" that are the shoulder of something brighter next door.
+
+    A real focus is a local intensity peak. Where a dim nucleus touches a
+    bright one (a pan-nuclear neighbour, a mitotic cell), the neighbour's
+    glow reaches a pixel or two inside the dim nucleus's outline, and the dim
+    nucleus's own - low - threshold lets it through. The test: look in a
+    ring of `ring` pixels around the focus, at pixels that do NOT belong to
+    the focus's own nucleus. If any of them is at least as bright as the
+    focus's brightest pixel, the "focus" is a slope, not a peak.
+    """
+    objs = ndi.find_objects(foci_labels)
+    H, W = foci_labels.shape
+    st = np.ones((3, 3), bool)
+    drop = []
+    for fid, sl in enumerate(objs, 1):
+        if sl is None:
+            continue
+        y0, y1 = max(0, sl[0].start - ring), min(H, sl[0].stop + ring)
+        x0, x1 = max(0, sl[1].start - ring), min(W, sl[1].stop + ring)
+        sub = foci_labels[y0:y1, x0:x1] == fid
+        nl = nuc_labels[y0:y1, x0:x1]
+        own = np.bincount(nl[sub].astype(np.int64)).argmax()
+        out = ndi.binary_dilation(sub, st, iterations=ring) & ~sub & (nl != own)
+        if out.any():
+            p = plane[y0:y1, x0:x1]
+            if p[out].max() >= p[sub].max():
+                drop.append(fid)
+    if drop:
+        foci_labels = np.where(np.isin(foci_labels, drop), 0, foci_labels).astype(foci_labels.dtype)
+    return foci_labels, len(drop)
 
 
 def remove_small(mask: np.ndarray, min_size: int) -> np.ndarray:
@@ -818,7 +1034,8 @@ def remove_small(mask: np.ndarray, min_size: int) -> np.ndarray:
 
 
 def detect_foci(plane: np.ndarray, nuc_labels: np.ndarray,
-                cfg: Config, params: Optional[FociParams] = None
+                cfg: Config, params: Optional[FociParams] = None,
+                threads_override: Optional[int] = None
                 ) -> Tuple[np.ndarray, pd.DataFrame]:
     """Find punctate foci *inside* nuclei.
 
@@ -836,7 +1053,7 @@ def detect_foci(plane: np.ndarray, nuc_labels: np.ndarray,
     if params is None:
         params = derive_foci_params(cfg, None)
 
-    empty = pd.DataFrame(columns=["nucleus_label", "focus_id", "area", "y", "x",
+    empty = pd.DataFrame(columns=["nucleus_label", "focus_id", "area", "y", "x", "tophat_peak",
                                   "mean_intensity", "max_intensity",
                                   "integrated_intensity"])
     nuc_mask = nuc_labels > 0
@@ -854,10 +1071,19 @@ def detect_foci(plane: np.ndarray, nuc_labels: np.ndarray,
         thr_map = _label_lut(nuc_labels, ids,
                              _clipped_bg(th, nuc_labels, ids, params.k))
     else:
-        med = np.asarray(ndi.median(th, nuc_labels, ids), dtype=float)
+        med = _label_median(th, nuc_labels, ids)
         dev = np.abs(th - _label_lut(nuc_labels, ids, med))
-        mad = np.asarray(ndi.median(dev, nuc_labels, ids), dtype=float)
+        mad = _label_median(dev, nuc_labels, ids)
         thr_map = _label_lut(nuc_labels, ids, med + params.k * 1.4826 * mad)
+
+    # An absolute floor on top of the per-nucleus threshold: in a dim nucleus
+    # the relative threshold sits just above that nucleus's own faint
+    # background, so a faint speck qualifies there that would never count in
+    # a normally stained nucleus. The floor makes "a focus" mean the same
+    # thing in every nucleus. (Unlike --foci-abs-threshold, which replaces
+    # the per-nucleus threshold altogether.)
+    if params.min_peak:
+        thr_map = np.maximum(thr_map, float(params.min_peak))
 
     mask = (th > thr_map) & nuc_mask
     if not mask.any():
@@ -870,7 +1096,6 @@ def detect_foci(plane: np.ndarray, nuc_labels: np.ndarray,
         foci_labels, _ = ndi.label(mask)
     else:
         if method == "log":
-            from skimage.feature import blob_log
             # Robust normalisation: a percentile-based scale is dominated by the
             # foci themselves in heavily damaged nuclei, which shrinks the LoG
             # response below a fixed threshold and silently loses counts.
@@ -879,23 +1104,18 @@ def detect_foci(plane: np.ndarray, nuc_labels: np.ndarray,
             mad_g = float(np.median(np.abs(vals - med_g)))
             scale = max(med_g + 5.0 * 1.4826 * mad_g, 1e-6)
 
-            src = th
-            if params.upsample > 1:
-                src = ndi.zoom(th, params.upsample, order=1)
-            norm = np.clip(src / scale, 0, 1)
-
-            blobs = blob_log(norm, min_sigma=params.min_sigma,
-                             max_sigma=params.max_sigma,
-                             num_sigma=int(params.num_sigma),
-                             threshold=params.log_threshold, overlap=0.5)
-            if len(blobs):
-                coords = blobs[:, :2] / params.upsample
-                coords = np.clip(np.round(coords).astype(int), 0,
-                                 np.array(th.shape) - 1)
-                inside = nuc_mask[coords[:, 0], coords[:, 1]]
-                coords = coords[inside]
+            # Seeds only survive where the thresholded mask is (see below),
+            # after being grown by the merge radius - so that is the only
+            # place worth looking for them.
+            region = mask
+            if params.seed_merge_radius >= 1:
+                region = ndi.binary_dilation(mask, structure=disk(params.seed_merge_radius))
+            region = region & nuc_mask
+            if threads_override is not None:
+                n_threads = threads_override
             else:
-                coords = np.empty((0, 2), int)
+                n_threads = getattr(cfg, "foci_threads", 0)
+            coords = log_seeds(th, scale, params, region, threads=n_threads)
 
             # Merge seeds that are closer together than one focus radius:
             # multi-scale LoG routinely fires twice on the same small focus,
@@ -925,6 +1145,10 @@ def detect_foci(plane: np.ndarray, nuc_labels: np.ndarray,
     if keep.size == 0:
         return np.zeros_like(nuc_labels), empty
     foci_labels = np.where(np.isin(foci_labels, keep), foci_labels, 0).astype(np.int32)
+    if params.edge_guard:
+        foci_labels, n_drop = drop_edge_leaks(foci_labels, nuc_labels, plane, params.edge_ring)
+        if not foci_labels.any():
+            return np.zeros_like(nuc_labels), empty
 
     # ---- assign each focus to the nucleus holding most of its pixels -------
     sel = foci_labels > 0
@@ -945,6 +1169,9 @@ def detect_foci(plane: np.ndarray, nuc_labels: np.ndarray,
                        "intensity_mean": "mean_intensity",
                        "intensity_max": "max_intensity"})
     props["integrated_intensity"] = props["mean_intensity"] * props["area"]
+    # height above the local background (top-hat) - what --foci-min-peak is
+    # compared against, so the floor can be chosen from this column
+    props["tophat_peak"] = np.asarray(ndi.maximum(th, foci_labels, props["focus_id"].to_numpy()), float)
     props = props.merge(pd.DataFrame({"focus_id": focus_ids,
                                       "nucleus_label": nucleus_of}),
                         on="focus_id", how="inner")
@@ -1855,6 +2082,7 @@ def process_plate(conn, plate, cfg: Config, segmenter: Segmenter,
     wells_seen: Dict[str, Tuple[int, int]] = {}
     fields_done: Dict[str, set] = {}
     foci_params: Optional[FociParams] = None
+    foci_seconds, foci_fields = 0.0, 0
     crops_done = 0
     chan_cache: Dict[int, List[str]] = {}
     strip_height = cfg.server_tile_height
@@ -1916,6 +2144,7 @@ def process_plate(conn, plate, cfg: Config, segmenter: Segmenter,
                                     "raw pixel parameters (%s). Pass "
                                     "--pixel-size-um for auto-scaling.",
                                     foci_params.describe())
+                t_foci = time.perf_counter()
                 for fidx in resolve_channels(names, cfg.foci_channels):
                     fchan = names[fidx]
                     plane = stack[..., fidx]
@@ -1942,6 +2171,10 @@ def process_plate(conn, plate, cfg: Config, segmenter: Segmenter,
                         props.insert(4, "channel", fchan)
                         foci_rows.append(props)
                     LOG.debug("    %s: %d foci in %d nuclei", fchan, len(props), n)
+                foci_seconds += time.perf_counter() - t_foci
+                foci_fields += 1
+                if foci_fields == 1:
+                    LOG.info("  foci detection: %.1f s for this field", foci_seconds)
 
             meas.insert(0, "plate", plate_name)
             meas.insert(1, "well", label)
@@ -1998,6 +2231,9 @@ def process_plate(conn, plate, cfg: Config, segmenter: Segmenter,
 
     nuclei = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
     foci = pd.concat(foci_rows, ignore_index=True) if foci_rows else pd.DataFrame()
+    if foci_fields:
+        LOG.info("  foci detection: %.0f s in total, %.1f s per field (%d fields)",
+                 foci_seconds, foci_seconds / foci_fields, foci_fields)
     well_meta_rows = []
     for label, (row, col) in wells_seen.items():
         r = {"plate": plate_name, "well": label, "well_row": row, "well_col": col,
@@ -2758,8 +2994,17 @@ def parse_args(argv=None) -> Config:
     g.add_argument("--foci-min-sigma", type=float, default=1.0)
     g.add_argument("--foci-max-sigma", type=float, default=4.0)
     g.add_argument("--foci-num-sigma", type=int, default=5)
+    g.add_argument("--foci-threads", type=int, default=0,
+                   help="CPU threads for LoG foci detection; 0 = auto (up to 8)")
     g.add_argument("--foci-log-threshold", type=float, default=0.02,
                    help="LoG detector sensitivity - lower finds more foci")
+    g.add_argument("--foci-edge-guard", action="store_true",
+                   help="drop 'foci' at the nuclear edge that are glow from a brighter "
+                        "neighbour (anything just outside the nucleus as bright as the focus)")
+    g.add_argument("--foci-min-peak", type=float, default=None,
+                   help="absolute floor: a focus must rise at least this much above its "
+                        "local background (top-hat units, as in the per-focus table's "
+                        "tophat_peak column), in addition to the per-nucleus --foci-k threshold")
     g.add_argument("--foci-k", type=float, default=3.0,
                    help="robust SDs above each nucleus's own background")
     g.add_argument("--foci-abs-threshold", type=float,
@@ -2867,7 +3112,9 @@ def parse_args(argv=None) -> Config:
         foci_method=a.foci_method, foci_tophat_radius=a.foci_tophat_radius,
         foci_min_sigma=a.foci_min_sigma, foci_max_sigma=a.foci_max_sigma,
         foci_num_sigma=a.foci_num_sigma, foci_log_threshold=a.foci_log_threshold,
+        foci_threads=a.foci_threads,
         foci_k=a.foci_k, foci_abs_threshold=a.foci_abs_threshold, foci_h=a.foci_h,
+        foci_edge_guard=a.foci_edge_guard, foci_min_peak=a.foci_min_peak,
         foci_min_area=a.foci_min_area, foci_max_area=a.foci_max_area,
         foci_min_count=a.foci_min_count, foci_as_marker=a.foci_as_marker,
         pixel_size_um=a.pixel_size_um, foci_diameter_um=a.foci_diameter_um,
